@@ -57,6 +57,7 @@ Pour la vente, le moteur retourne le graphique (miroir) et applique exactement l
 | `n8n/*.js` | Le code des nœuds n8n (configuration, cycle, taille de position, journal, gestion des stops) |
 | `build/construire.js` | Assemble le tout en `n8n/workflow.sdk.js` (bot) et `n8n/gestion.sdk.js` (gestion) |
 | `tests/` | Histoires de graphiques et vérification des décisions du bot |
+| `docs/patterns.md` | Référentiel visuel des patterns ICT / SMC et où chacun est codé |
 
 ```
 node tests/test_moteur.js      # le moteur
