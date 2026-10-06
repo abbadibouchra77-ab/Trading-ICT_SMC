@@ -4,44 +4,31 @@ Le bot lit le graphique comme une trader. Il ne s'appuie jamais sur un seul él�
 construit une lecture complète du marché, du Monthly au M15, et ne trade que lorsque toute
 l'histoire va dans le même sens.
 
-## Comment il lit le graphique
+## Comment il lit le graphique (v2)
 
-À chaque clôture de bougie M15, et seulement sur des bougies clôturées, pour chaque actif :
+Le bot ne suit pas une checklist rigide : il raconte l'histoire du graphique et donne une **note**.
+Il ne trade que les setups **A++** (note ≥ 20), avec quelques interdits absolus.
 
-1. **Lecture du haut (Monthly, Weekly, Daily)**
-   - structure (plus hauts et plus bas, BOS, CHoCH) ;
-   - liquidité visée (plus hauts et plus bas du jour, de la semaine, du mois, sommets et creux égaux) ;
-   - zones (OB, FVG, IFVG, breaker, supports et résistances) ;
-   - position du prix dans le grand mouvement : prime ou décote.
-2. **H4, le setup**
-   - Jambe A → B : A est la mèche extrême d'où part le mouvement, B est l'extrême atteint. La jambe doit avoir cassé une structure.
-   - Le prix doit revenir dans l'OTE (0,5 et au-delà).
-   - Le range est interdit tant qu'un de ses bords n'a pas été balayé.
-   - Le RSI qui tourne autour de 50 est interdit.
-   - Le mouvement qui a déjà atteint son point B est interdit.
-   - Acheter juste sous une résistance qui vient de rejeter le prix est interdit.
-3. **M15, l'entrée**
-   - Le vrai balayage, à l'extrême de toute la structure.
-   - Le MSS, en clôture.
-   - Le retour à 0,5 du Fibonacci M15 dans une confluence (OB, FVG, IFVG, breaker M15 ou zone H4).
-   - Le rebond.
-   - Variante : balayage, MSS, retest de l'OB, BOS de confirmation, puis entrée au retest du FVG ou de l'IFVG.
-4. **Contre la lecture du haut** : le trade n'est permis que si la liquidité prise est une
-   liquidité Daily, Weekly ou Monthly, ou si elle est prise dans une zone Daily ou Weekly. Il
-   faut alors une confirmation de plus.
-5. **Confirmations** (jamais suffisantes seules, il faut au moins 2 points) :
-   - rebond du RSI sur 50 en même temps que le prix ;
-   - cassure de 50 par le RSI avec deux clôtures ;
-   - divergences ;
-   - surachat ou survente ;
-   - volume.
-6. **Gestion du trade**
-   - Stop derrière la mèche du balayage, avec une petite marge.
-   - TP1 et TP2 sur la liquidité visible en face, à au moins 2R. Deux ordres si le volume le permet.
-   - Un mouvement déjà tradé (même point A H4) n'est jamais repris.
+1. **Vision HTF (Monthly, Weekly, Daily)** : biais (structure BOS / CHoCH), dealing range Daily (prime / décote),
+   point B visé (DOL : plus haut / bas de la veille, de la semaine, du mois, sommets / creux égaux), zones HTF.
+2. **Setup H4** : jambe A → B qui casse la structure ; le point A balaie de la liquidité (AMD : accumulation,
+   manipulation, distribution) ; retour en zone de décote, idéalement l'OTE (0,62-0,79) dans un OB, breaker, FVG,
+   IFVG ou BPR. Range H4 non balayé ou mouvement qui a déjà atteint son point B : pas de trade.
+3. **Confirmation H1** : rejet par grande mèche, CHoCH H1 ou FVG H1 au moment du balayage.
+4. **Entrée M15** en killzone (Londres 02h-05h, New York 07h-11h, heure de New York ; cryptos 24h/24) :
+   - balayage d'une liquidité (session Asie / Londres, plus bas de la veille, creux égaux, bord de range, ligne de tendance…),
+     à l'extrême de la structure, avec une mèche qui revient ;
+   - MSS en clôture avec un vrai déplacement (grande bougie) ;
+   - **ordre limite au 50 % du FVG** laissé par le déplacement (sinon BPR, sinon OB), annulé à la fin de la killzone.
+5. **Bonus** : Power of 3 (manipulation sous l'ouverture de minuit NY), Judas swing sur l'Asie, liquidité cumulée,
+   volume, **SMT** avec l'actif corrélé, divergence RSI, RSI qui sort de sa zone neutre.
+6. **Interdits absolus** : jamais sans balayage de liquidité, jamais contre le biais HTF sans balayage d'une liquidité
+   HTF dans une zone HTF, jamais dans un range non balayé, jamais sous 2R, jamais dans un mouvement déjà tradé ou terminé.
+7. **Gestion** (workflow « SMC Vision - Gestion des trades », toutes les 5 min) : stop derrière la mèche du balayage ;
+   deux demi-ordres TP1 (première liquidité à ≥ 2R) et TP2 (point B HTF) ; quand TP1 est atteint, stop à l'entrée,
+   puis stop suiveur sous chaque nouveau creux M15 (au-dessus de chaque sommet pour une vente).
 
-Pour la vente, le moteur retourne le graphique (miroir) et applique exactement les mêmes
-règles. Les deux sens sont donc toujours traités pareil.
+Pour la vente, le moteur retourne le graphique (miroir) et applique exactement les mêmes règles.
 
 ## Règles de risque (compte démo uniquement)
 
@@ -67,8 +54,8 @@ règles. Les deux sens sont donc toujours traités pareil.
 | Fichier | Rôle |
 |---|---|
 | `src/moteur.js` | Le moteur de lecture ICT/SMC (toute la stratégie) |
-| `n8n/*.js` | Le code des nœuds n8n (configuration, cycle, taille de position, journal) |
-| `build/construire.js` | Assemble le tout en `n8n/workflow.sdk.js` (workflow n8n) |
+| `n8n/*.js` | Le code des nœuds n8n (configuration, cycle, taille de position, journal, gestion des stops) |
+| `build/construire.js` | Assemble le tout en `n8n/workflow.sdk.js` (bot) et `n8n/gestion.sdk.js` (gestion) |
 | `tests/` | Histoires de graphiques et vérification des décisions du bot |
 
 ```

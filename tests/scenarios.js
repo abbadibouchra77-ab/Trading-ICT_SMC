@@ -27,6 +27,11 @@ Constructeur.prototype.ajoute = function (o, h, l, c, v) {
   this.t += M15; this.p = c;
   return this;
 };
+// Bougies calmes autour du prix actuel jusqu'à l'heure UTC voulue (pour placer une histoire en session).
+Constructeur.prototype.jusquA = function (heureUTC, bruit) {
+  while (new Date(this.t).getUTCHours() !== heureUTC || new Date(this.t).getUTCMinutes() !== 0) this.vers(this.p + (alea() - 0.5) * (bruit || 0.6), 1, bruit || 0.6);
+  return this;
+};
 // Zigzag : une suite de cibles.
 Constructeur.prototype.zigzag = function (cibles, n, bruit) { for (const c of cibles) this.vers(c, n, bruit); return this; };
 
@@ -48,6 +53,7 @@ function cleMois(t) { return new Date(t).toISOString().slice(0, 7); }
 function versBridge(m15) {
   return {
     M15: m15.slice(-500),
+    H1: regrouper(m15, 60).slice(-500),
     H4: regrouper(m15, 240).slice(-500),
     D1: regrouper(m15, 1440).slice(-300),
     W1: regrouper(m15, 0, cleSemaine).slice(-60),

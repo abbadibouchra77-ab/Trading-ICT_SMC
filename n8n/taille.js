@@ -1,6 +1,7 @@
 // Taille de position : risque dégressif selon le solde (calculé dans 'Préparer le cycle', au plus 5 %),
 // stop derrière la mèche du balayage.
-// Deux ordres si possible : moitié à l'objectif 1, moitié à l'objectif 2. Sinon un seul ordre à l'objectif 1.
+// Ordres LIMITES au prix d'entrée du setup. Deux demi-ordres si possible : un à TP1, un à TP2.
+// Sinon un seul ordre à TP1. Le workflow de gestion met le stop à l'entrée quand TP1 est atteint.
 const t = $('Lecture ICT/SMC').first().json;
 const cfg = $('Configuration').first().json;
 const spec = $('Spécification du symbole').first().json;
@@ -19,7 +20,7 @@ const pertePourUnLot = distanceStop * contractSize * conversion;
 let volume = pertePourUnLot > 0 ? risqueMontant / pertePourUnLot : 0;
 function arrondir(v) { return Math.round(Math.floor(v / pas + 1e-9) * pas * 1e8) / 1e8; }
 volume = Math.min(arrondir(volume), maxVol);
-const base = { symbole: t.symbole, sens: t.sens, entree: t.entree, stop: t.stop, risqueMontant: risqueMontant, solde: solde, minVolume: minVol };
+const base = { symbole: t.symbole, sens: t.sens, entree: t.entree, stop: t.stop, expireA: t.expireA, risqueMontant: risqueMontant, solde: solde, minVolume: minVol };
 if (!(volume >= minVol) || !Number.isFinite(tickSize)) {
   return [{ json: Object.assign(base, { volumeValide: false, volume: volume, raison: 'Volume calculé (' + volume + ') sous le minimum du broker (' + minVol + ') : trade non passé.' }) }];
 }

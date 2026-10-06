@@ -1,48 +1,42 @@
-// Tests du moteur : `node tests/test_moteur.js`
+// Tests du moteur v2 : `node tests/test_moteur.js`
 // Chaque test raconte une histoire de graphique et vérifie la décision du bot.
 const assert = require('assert');
 const M = require('../src/moteur.js');
 const S = require('./scenarios.js');
 
-// ---------- Histoire 1 : le setup d'achat complet ----------
-// Tendance de fond haussière, retour sous des creux égaux H4, balayage (point A),
-// impulsion qui casse la structure (point B), retour dans l'OTE H4, puis en M15 :
-// balayage de creux égaux, MSS, retour à 0,5 dans un FVG, rebond -> achat.
-function histoireAchat(options) {
-  options = options || {};
+// ---------- Histoire 1 : le setup A++ d'achat ----------
+// Fond haussier ; retour H4 sous des creux égaux, balayage (point A) ; impulsion qui casse la
+// structure (point B) ; retour dans l'OTE H4. La nuit, l'Asie forme un range avec des creux égaux.
+// En killzone de Londres : balayage de l'Asie (Judas swing) sous l'ouverture de minuit,
+// MSS avec déplacement et volume, FVG M15 -> ordre limite au 50 % du FVG.
+// options : heureBalayage (heure UTC), sansBalayage, entreeTouchee
+function histoireAchat(o) {
+  o = o || {};
   const g = new S.Constructeur(Date.parse('2026-05-04T00:00:00Z'), 1500);
-  // 1) fond haussier sur ~110 jours : montées de 50, baisses de 25
   for (let k = 0; k < 24; k++) g.vers(g.p + 50, 288, 0.8).vers(g.p - 25, 144, 0.8);
   const P0 = g.p + 50; g.vers(P0, 288, 0.8);
-  // 2) retour H4 : creux égaux vers P0-60, puis balayage (point A)
   g.vers(P0 - 60, 192, 0.8).vers(P0 - 38, 96, 0.8).vers(P0 - 59, 96, 0.8).vers(P0 - 35, 96, 0.8).vers(P0 - 64, 40, 0.8);
-  g.ajoute(g.p, g.p + 0.5, P0 - 70, P0 - 63, 600);
-  // 3) impulsion qui casse le dernier sommet (BOS) jusqu'au point B
-  g.vers(P0 + 45, 240, 0.8);
-  // 4) retour en M15 vers la zone d'achat H4, avec des creux égaux à P0-20
-  g.vers(P0 + 10, 96, 0.6).vers(P0 + 15, 24, 0.6).vers(P0 - 14, 48, 0.6).vers(P0 - 20, 12, 0.4).vers(P0 - 12, 10, 0.4)
-    .vers(P0 - 20, 10, 0.4).vers(P0 - 12, 10, 0.4).vers(P0 - 20, 8, 0.3);
-  if (options.sansBalayage) return g;
-  // 5) le balayage M15 : mèche sous les creux égaux, clôture au-dessus
-  g.ajoute(P0 - 20, P0 - 19.5, P0 - 27, P0 - 19, 900);
-  // 6) MSS : déplacement haussier qui laisse un FVG
-  g.ajoute(P0 - 19, P0 - 14.8, P0 - 19.3, P0 - 15, 500);
-  g.ajoute(P0 - 15, P0 - 8.5, P0 - 15.2, P0 - 9, 800);
-  g.ajoute(P0 - 9, P0 - 5.5, P0 - 9.5, P0 - 6, 400);
-  g.ajoute(P0 - 6, P0 - 0.8, P0 - 6.6, P0 - 1.2, 300);
-  // 7) retour vers 0,5 du Fibonacci M15, dans le FVG
-  g.ajoute(P0 - 1.2, P0 - 1, P0 - 4, P0 - 3.6, 150);
-  g.ajoute(P0 - 3.6, P0 - 3.4, P0 - 8, P0 - 7.6, 150);
-  g.ajoute(P0 - 7.6, P0 - 7.4, P0 - 12, P0 - 11.6, 150);
-  g.ajoute(P0 - 11.6, P0 - 11.4, P0 - 15, P0 - 14.2, 150);
-  if (options.sansRebond) return g;
-  // 8) le rebond
-  g.ajoute(P0 - 14.2, P0 - 9.8, P0 - 14.4, P0 - 10, 300);
+  g.ajoute(g.p, g.p + 0.5, P0 - 70, P0 - 63, 600);          // point A : balayage H4
+  g.vers(P0 + 45, 240, 0.8);                                 // impulsion -> point B
+  g.vers(P0 + 10, 96, 0.6).vers(P0 + 15, 24, 0.6).vers(P0 - 14, 48, 0.6);
+  const hB = o.heureBalayage === undefined ? 6 : o.heureBalayage; // 06h UTC = 02h New York (été)
+  g.jusquA((hB + 24 - 6) % 24, 0.4);                         // calme jusqu'à 6 h avant le balayage
+  // range (Asie si balayage à 6 h UTC) avec creux égaux à P0-20
+  g.vers(P0 - 20, 4, 0.3).vers(P0 - 12, 4, 0.3).vers(P0 - 20, 4, 0.3).vers(P0 - 12, 4, 0.3);
+  g.vers(P0 - 16, 4, 0.3).vers(P0 - 12, 4, 0.3).vers(P0 - 17, 2, 0.3).vers(P0 - 19.5, 2, 0.2);
+  if (o.sansBalayage) return g;
+  g.ajoute(P0 - 19.5, P0 - 19.2, P0 - 27, P0 - 19, 900);     // balayage : grande mèche, clôture au-dessus
+  g.ajoute(P0 - 19, P0 - 14.8, P0 - 19.3, P0 - 15, 500);     // déplacement...
+  g.ajoute(P0 - 15, P0 - 8.5, P0 - 15.2, P0 - 9, 800);       // ... MSS (clôture au-dessus du sommet)
+  g.ajoute(P0 - 9, P0 - 5.5, P0 - 9.5, P0 - 6, 400);         // FVG du déplacement : entre -19 et -15,2
+  g.ajoute(P0 - 6, P0 - 4.8, P0 - 6.6, P0 - 5.2, 300);
+  if (o.entreeTouchee) g.ajoute(P0 - 5.2, P0 - 5, P0 - 18, P0 - 11, 300);
+  g.P0 = P0;
   return g;
 }
 
-function analyser(bougies, etat) {
-  return M.analyserActif('TEST', S.versBridge(bougies), S.maintenantApres(bougies), etat || {});
+function analyser(bougies, etat, options, correle) {
+  return M.analyserActif('TEST', S.versBridge(bougies), correle ? { M15: correle.slice(-500) } : null, S.maintenantApres(bougies), etat || {}, options || {});
 }
 
 const resultats = [];
@@ -51,39 +45,64 @@ function test(nom, fn) {
   catch (e) { resultats.push('ECHEC ' + nom + '\n      ' + e.message); process.exitCode = 1; }
 }
 
-test('Achat complet : le bot achète', function () {
-  const r = analyser(histoireAchat().b);
+test('Setup A++ d\'achat : ordre limite au FVG', function () {
+  const g = histoireAchat();
+  const r = analyser(g.b);
   assert.strictEqual(r.action, 'trader', r.raison);
   assert.strictEqual(r.sens, 'buy');
-  assert.ok(r.stop < r.entree && r.tp1 > r.entree, 'stop sous l\'entrée, objectif au-dessus');
-  assert.ok(r.rr1 >= 2, 'au moins 2R');
-  console.log('\n--- Lecture du bot (achat) ---\n' + r.lecture + '\nConfirmations : ' + r.confirmations.join(' ; ') + '\n');
+  assert.ok(Math.abs(r.entree - (g.P0 - 17.1)) < 0.01, 'entrée au 50 % du FVG du déplacement : ' + r.entree);
+  assert.ok(r.stop < g.P0 - 27, 'stop sous la mèche du balayage');
+  assert.ok(r.rr1 >= 2 && r.tp1 > r.entree);
+  assert.strictEqual(r.killzone, 'Londres');
+  assert.strictEqual(M.ny(Date.parse(r.expireA)).hm, 500, 'l\'ordre expire à la fin de la killzone de Londres (05h NY)');
+  console.log('\n--- Lecture du bot (achat) ---\n' + r.lecture + '\nNote : ' + r.note + '\n  ' + r.confirmations.join('\n  ') + '\n');
 });
 
-test('Le même graphique à l\'envers : le bot vend (symétrie parfaite)', function () {
+test('Le même graphique retourné : vente symétrique', function () {
   const g = histoireAchat();
-  const K = 5000;
-  const r = analyser(S.inverser(g.b, K));
   const rA = analyser(g.b);
+  const r = analyser(S.inverser(g.b, 5000));
   assert.strictEqual(r.action, 'trader', r.raison);
   assert.strictEqual(r.sens, 'sell');
-  assert.ok(Math.abs(r.entree - (K - rA.entree)) < 1e-6, 'entrée miroir');
-  assert.ok(Math.abs(r.stop - (K - rA.stop)) < 1e-6, 'stop miroir');
-  assert.ok(r.stop > r.entree && r.tp1 < r.entree);
+  assert.ok(Math.abs(r.entree - (5000 - rA.entree)) < 1e-6 && Math.abs(r.stop - (5000 - rA.stop)) < 1e-6);
+  assert.strictEqual(r.note, rA.note);
 });
 
-test('Avant le rebond : on attend', function () {
-  const r = analyser(histoireAchat({ sansRebond: true }).b);
-  assert.strictEqual(r.action, 'attendre');
-});
-
-test('Avant la vraie prise de liquidité : on n\'entre pas', function () {
+test('Avant le balayage : la Smart Money n\'a pas pris la liquidité, on attend', function () {
   const r = analyser(histoireAchat({ sansBalayage: true }).b);
   assert.strictEqual(r.action, 'attendre');
-  assert.ok(!/Achat : Données/.test(r.raison), r.raison);
 });
 
-test('Mouvement déjà tradé (même point A) : pas de nouveau trade', function () {
+test('Entrée déjà touchée : on ne court pas après le prix', function () {
+  const r = analyser(histoireAchat({ entreeTouchee: true }).b);
+  assert.strictEqual(r.action, 'attendre');
+  assert.ok(/déjà revenu sur l'entrée/.test(r.raison), r.raison);
+});
+
+test('Hors killzone : pas d\'ordre (forex / indices / métaux)', function () {
+  const r = analyser(histoireAchat({ heureBalayage: 17 }).b); // 17h UTC = 13h New York
+  assert.strictEqual(r.action, 'attendre');
+  assert.ok(/hors killzone/.test(r.raison), r.raison);
+});
+
+test('Crypto : 24h/24, même hors killzone', function () {
+  const r = analyser(histoireAchat({ heureBalayage: 17 }).b, {}, { crypto: true });
+  assert.strictEqual(r.action, 'trader', r.raison);
+});
+
+test('SMT : l\'actif corrélé ne fait pas de plus bas -> points en plus', function () {
+  const g = histoireAchat();
+  const sans = analyser(g.b);
+  // actif corrélé : mêmes bougies, mais sa mèche de balayage reste au-dessus du creux précédent
+  const c = g.b.map(function (b) { return Object.assign({}, b); });
+  const k = c.length - 5;
+  c[k].low = g.P0 - 19.4; c[k].close = g.P0 - 19;
+  const avec = analyser(g.b, {}, { correle: 'CORR' }, c);
+  assert.ok(avec.confirmations.some(function (x) { return /SMT/.test(x); }), avec.confirmations.join(' | '));
+  assert.strictEqual(avec.note, sans.note + 2);
+});
+
+test('Mouvement déjà tradé (même point A H4) : pas de nouveau trade', function () {
   const g = histoireAchat();
   const r1 = analyser(g.b);
   const r2 = analyser(g.b, { legsDejaTradees: [r1.cleMouvement] });
@@ -91,40 +110,48 @@ test('Mouvement déjà tradé (même point A) : pas de nouveau trade', function 
   assert.ok(/déjà été tradé/.test(r2.raison), r2.raison);
 });
 
+test('Note insuffisante : pas A++, pas de trade', function () {
+  const r = analyser(histoireAchat().b, {}, { reglages: { noteMin: 60 } });
+  assert.strictEqual(r.action, 'attendre');
+  assert.ok(/pas un setup A\+\+/.test(r.raison), r.raison);
+});
+
 test('Range : pas de trade dedans', function () {
   const g = new S.Constructeur(Date.parse('2026-05-04T00:00:00Z'), 2000);
   for (let k = 0; k < 120; k++) g.vers(2000 + (k % 2 ? 15 : -15), 96, 1.2);
-  const r = analyser(g.b);
-  assert.strictEqual(r.action, 'attendre');
+  assert.strictEqual(analyser(g.b).action, 'attendre');
 });
 
 test('Bougie en cours ignorée : seules les bougies clôturées comptent', function () {
-  const g = histoireAchat();
-  const b = g.b;
-  // « maintenant » tombe au milieu de la dernière bougie : elle n'est pas clôturée
-  const maintenant = Date.parse(b[b.length - 1].time) + 5 * 60000;
-  const r = M.analyserActif('TEST', S.versBridge(b), maintenant, {});
-  assert.strictEqual(r.action, 'attendre');
+  const b = histoireAchat().b;
+  // « maintenant » tombe au milieu de la dernière bougie : même décision que sans cette bougie
+  const enCours = M.analyserActif('TEST', S.versBridge(b), null, Date.parse(b[b.length - 1].time) + 5 * 60000, {}, {});
+  const sansElle = analyser(b.slice(0, -1));
+  assert.strictEqual(enCours.action, sansElle.action);
+  assert.strictEqual(enCours.entree, sansElle.entree);
 });
 
-test('Définitions : FVG, OB, IFVG, breaker', function () {
+test('Définitions : FVG, OB, IFVG, breaker, BPR', function () {
   const t0 = Date.parse('2026-01-05T00:00:00Z');
   const mk = function (arr) { return arr.map(function (x, i) { return { t: t0 + i * 900000, o: x[0], h: x[1], l: x[2], c: x[3], v: 0 }; }); };
-  // 20 bougies calmes, puis bougie baissière (OB), puis déplacement haussier avec FVG
   const base = []; for (let i = 0; i < 20; i++) base.push([100, 100.5, 99.5, 100]);
-  let bs = mk(base.concat([[100, 100.2, 99, 99.2], [99.2, 101.5, 99.1, 101.4], [101.4, 103.5, 101.3, 103.3], [103.3, 104, 103, 103.8]]));
-  let z = M.zones(bs, 'M15', 0);
-  assert.ok(z.some(function (x) { return x.type === 'FVG' && x.role === 'achat'; }), 'FVG haussier trouvé');
-  assert.ok(z.some(function (x) { return x.type === 'OB' && x.role === 'achat' && x.bas === 99 && x.haut === 100.2; }), 'OB haussier = dernière bougie baissière');
-  // une mèche sous l'OB ne l'invalide pas
-  bs = mk(base.concat([[100, 100.2, 99, 99.2], [99.2, 101.5, 99.1, 101.4], [101.4, 103.5, 101.3, 103.3], [103.3, 104, 103, 103.8], [103.8, 103.9, 98.8, 99.5]]));
-  z = M.zones(bs, 'M15', 0);
-  assert.ok(z.some(function (x) { return x.type === 'OB' && x.role === 'achat'; }), 'mèche : OB toujours valide');
-  // une clôture sous l'OB le transforme en breaker (résistance)
-  bs = mk(base.concat([[100, 100.2, 99, 99.2], [99.2, 101.5, 99.1, 101.4], [101.4, 103.5, 101.3, 103.3], [103.3, 104, 103, 103.8], [103.8, 103.9, 98.5, 98.7]]));
-  z = M.zones(bs, 'M15', 0);
+  const jambe = [[100, 100.2, 99, 99.2], [99.2, 101.5, 99.1, 101.4], [101.4, 103.5, 101.3, 103.3], [103.3, 104, 103, 103.8]];
+  let z = M.zones(mk(base.concat(jambe)), 'M15', 0);
+  assert.ok(z.some(function (x) { return x.type === 'FVG' && x.role === 'achat'; }), 'FVG haussier');
+  assert.ok(z.some(function (x) { return x.type === 'OB' && x.role === 'achat' && x.bas === 99 && x.haut === 100.2; }), 'OB = dernière bougie baissière');
+  z = M.zones(mk(base.concat(jambe, [[103.8, 103.9, 98.8, 99.5]])), 'M15', 0);
+  assert.ok(z.some(function (x) { return x.type === 'OB' && x.role === 'achat'; }), 'une mèche n\'invalide pas l\'OB');
+  z = M.zones(mk(base.concat(jambe, [[103.8, 103.9, 98.5, 98.7]])), 'M15', 0);
   assert.ok(z.some(function (x) { return x.type === 'Breaker' && x.role === 'vente'; }), 'clôture au-delà : breaker');
-  assert.ok(z.some(function (x) { return x.type === 'IFVG' && x.role === 'vente'; }), 'FVG clôturé au-delà : IFVG');
+  assert.ok(z.some(function (x) { return x.type === 'IFVG' && x.role === 'vente'; }), 'clôture au-delà : IFVG');
+  // BPR : FVG baissier puis FVG haussier qui se chevauchent
+  z = M.zones(mk(base.concat([[100, 100.1, 99.8, 99.9], [99.9, 99.9, 97, 97.2], [97.2, 99.0, 96.8, 98.8], [98.8, 102, 98.7, 101.8], [101.8, 102.2, 99.6, 101.9]])), 'M15', 0);
+  assert.ok(z.some(function (x) { return x.type === 'BPR'; }), 'BPR');
+});
+
+test('Heure de New York et sessions', function () {
+  assert.strictEqual(M.ny(Date.parse('2026-08-10T07:00:00Z')).hm, 300);  // été : UTC-4
+  assert.strictEqual(M.ny(Date.parse('2026-12-10T07:00:00Z')).hm, 200);  // hiver : UTC-5
 });
 
 console.log(resultats.join('\n'));
