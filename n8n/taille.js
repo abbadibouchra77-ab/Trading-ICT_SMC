@@ -1,10 +1,11 @@
-// Taille de position : risque fixe (au plus 2 % du solde), stop derrière la mèche du balayage.
+// Taille de position : risque dégressif selon le solde (calculé dans 'Préparer le cycle', au plus 5 %),
+// stop derrière la mèche du balayage.
 // Deux ordres si possible : moitié à l'objectif 1, moitié à l'objectif 2. Sinon un seul ordre à l'objectif 1.
 const t = $('Lecture ICT/SMC').first().json;
 const cfg = $('Configuration').first().json;
 const spec = $('Spécification du symbole').first().json;
 const solde = nombre(t.solde);
-const risquePct = Math.min(nombre(t.risquePct) || 1, 2);
+const risquePct = Math.min(nombre(t.risquePct) || 1, 5);
 const risqueMontant = solde * risquePct / 100;
 const distanceStop = Math.abs(t.entree - t.stop);
 const tickSize = nombre(spec.tickSize), contractSize = nombre(spec.contractSize);

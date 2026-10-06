@@ -1,7 +1,14 @@
 // Prépare le cycle : règles de risque du compte, puis liste des actifs à analyser.
 const cfg = $('Configuration').first().json;
 const solde = nombre($('Solde du compte').first().json.balance);
-const risquePct = Math.min(Number(cfg.riskPercent) || 1, 2); // jamais plus de 2 %
+// Risque dégressif : on prend le premier palier dont la limite est au-dessus du solde.
+// Sécurité : jamais plus de 5 %, et 1 % si le solde est illisible.
+function risqueSelonSolde(s) {
+  if (!(s > 0)) return 1;
+  const p = (cfg.paliersRisque || []).find(function (x) { return s < x.jusqu_a; });
+  return Math.min(p ? p.risque : (Number(cfg.risqueAuDela) || 1), 5);
+}
+const risquePct = risqueSelonSolde(solde);
 
 // 1) Pertes du jour (jour de Paris), comptées sur les trades du bot.
 //    Si le bridge ne donne pas l'étiquette des deals, on compte toutes les pertes du compte (plus prudent).

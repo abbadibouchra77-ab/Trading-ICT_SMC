@@ -45,7 +45,20 @@ règles. Les deux sens sont donc toujours traités pareil.
 
 ## Règles de risque (compte démo uniquement)
 
-- Risque par trade : `riskPercent` dans le nœud *Configuration* (1 % par défaut). Le code le plafonne à 2 %.
+- Risque par trade dégressif selon le solde (accord écrit du 06/10/2026), réglable dans `paliersRisque` du nœud *Configuration* :
+
+  | Solde | Risque par trade |
+  |---|---|
+  | moins de 7 500 | 5 % |
+  | 7 500 à 10 000 | 4 % |
+  | 10 000 à 15 000 | 3,5 % |
+  | 15 000 à 20 000 | 3 % |
+  | 20 000 à 30 000 | 2,5 % |
+  | 30 000 à 50 000 | 2 % |
+  | 50 000 à 100 000 | 1,5 % |
+  | 100 000 et plus | 1 % |
+
+  Sécurité : jamais plus de 5 %, même si un palier est mal saisi.
 - Au plus 2 pertes par jour (jour de Paris). Au plus 3 trades SMC Vision ouverts en même temps.
 - Un seul trade par actif à la fois.
 

@@ -41,14 +41,19 @@ const sorties = {
 };
 const actifs = executer('Préparer le cycle', sorties);
 assert.strictEqual(actifs.length, 12, 'EURUSD déjà engagé : 12 actifs à analyser');
-assert.ok(actifs.every(function (a) { return a.risquePct === 1; }));
+assert.ok(actifs.every(function (a) { return a.risquePct === 3.5; }), 'solde 10 000 : 3,5 %');
 
 // 2 pertes aujourd'hui : plus rien n'est analysé
 const deuxPertes = Object.assign({}, sorties, { 'Deals du jour': [{ type: 'close', netProfit: -100, label: 'SMC-Vision' }, { type: 'close', netProfit: -95, label: 'SMC-Vision' }] });
 assert.strictEqual(executer('Préparer le cycle', deuxPertes).length, 0, '2 pertes : on arrête');
-// risque demandé à 5 % : plafonné à 2 %
-const cfg5 = Object.assign({}, config, { riskPercent: 5 });
-assert.strictEqual(executer('Préparer le cycle', Object.assign({}, sorties, { Configuration: [cfg5] }))[0].risquePct, 2);
+// Risque dégressif selon le solde
+[[5000, 5], [7499, 5], [7500, 4], [9999, 4], [10000, 3.5], [15000, 3], [20000, 2.5], [30000, 2], [49999, 2], [50000, 1.5], [99999, 1.5], [100000, 1], [250000, 1]].forEach(function (x) {
+  const r = executer('Préparer le cycle', Object.assign({}, sorties, { 'Solde du compte': [{ balance: x[0] }] }))[0].risquePct;
+  assert.strictEqual(r, x[1], 'solde ' + x[0] + ' : ' + r + ' % au lieu de ' + x[1] + ' %');
+});
+// un palier mal saisi à 10 % est ramené à 5 %
+const cfgFaux = Object.assign({}, config, { paliersRisque: [{ jusqu_a: 1e9, risque: 10 }] });
+assert.strictEqual(executer('Préparer le cycle', Object.assign({}, sorties, { Configuration: [cfgFaux] }))[0].risquePct, 5);
 
 // Lecture ICT/SMC sur l'actif XAUUSD avec les bougies du scénario
 const actif = actifs.find(function (a) { return a.symbol === 'XAUUSD'; });
@@ -64,12 +69,12 @@ const lecture = executer('Lecture ICT/SMC', s2)[0];
 assert.strictEqual(lecture.action, 'trader', lecture.raison);
 assert.ok(lecture.notes.some(function (n) { return /Monthly reconstruit/.test(n); }));
 
-// Taille de position : risque 1 % de 10 000 = 100 $
+// Taille de position : risque 3,5 % de 10 000 = 350 $
 s2['Lecture ICT/SMC'] = [lecture];
 s2['Spécification du symbole'] = [{ tickSize: 0.01, contractSize: 100, volumeStep: 0.01, minVolume: 0.01, maxVolume: 50 }];
 const ordres = executer('Taille de position', s2);
 const risque = ordres.reduce(function (s, o) { return s + o.volume * Math.abs(o.entree - o.stop) * 100; }, 0);
-assert.ok(risque <= 100 + 1e-6 && risque > 75, 'risque réel ' + risque.toFixed(2) + ' $ pour 100 $ prévus');
+assert.ok(risque <= 350 + 1e-6 && risque > 300, 'risque réel ' + risque.toFixed(2) + ' $ pour 350 $ prévus');
 assert.ok(ordres.every(function (o) { return o.volumeValide && o.objectif; }));
 
 // Ligne du journal
