@@ -341,8 +341,8 @@ function niveauxPivots(bs, L, ut, recul, inverse) {
     const vraiHaut = (cote === 'H') !== !!inverse; // sur le graphique miroir, un « sommet » est un vrai creux
     for (const p of ps) out.push(niveau(p.p, cote, (vraiHaut ? 'sommet ' : 'creux ') + ut, ut, bs[Math.min(n - 1, p.i + L)].t, 1));
     // regroupements : égaux (tolérance serrée) et supports / résistances (plus large)
-    [[0.1, 2, cote === 'H' ? 'sommets égaux (EQH) ' : 'creux égaux (EQL) '],
-     [0.3, 3, cote === 'H' ? 'résistance droite ' : 'support droit ']].forEach(function (r) {
+    [[0.1, 2, vraiHaut ? 'sommets égaux (EQH) ' : 'creux égaux (EQL) '],
+     [0.3, 3, vraiHaut ? 'résistance droite ' : 'support droit ']].forEach(function (r) {
       const tol = r[0] * atr;
       const vus = {};
       for (let a = 0; a < ps.length; a++) {
