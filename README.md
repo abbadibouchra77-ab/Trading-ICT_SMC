@@ -66,7 +66,8 @@ node tests/test_n8n.js         # les nœuds n8n, avec un faux bridge
 
 ## Dans n8n
 
-- Workflow : **SMC Vision - Bot ICT/SMC autonome (DEMO Fusion cTrader)** (id `LYNpvTXkKDTe4bnU`). Il est créé **inactif** : c'est toi qui l'actives.
+- Workflow : **SMC Vision - Bot ICT/SMC autonome (DEMO Fusion cTrader)** (id `LYNpvTXkKDTe4bnU`)
+- Workflow : **SMC Vision - Gestion des trades (DEMO Fusion cTrader)** (id `dKm4Qjv714hOjJQs`), toutes les 5 min. Les deux workflows sont créés **inactifs** : c'est toi qui les actives.
 - Journal : la table **SMC_Vision_Journal** (id `T1SH2vr9hn0f1Ahm`) reçoit une ligne par trade. Elle contient la lecture top-down, la zone, la liquidité, les confirmations, l'entrée, le stop, les objectifs, les numéros d'ordre et le résultat. Le résultat est mis à jour au cycle suivant la clôture.
 - Pourquoi il n'a pas tradé : regarde la sortie du nœud *Lecture ICT/SMC* dans l'exécution.
 
