@@ -17,7 +17,6 @@ const REFERENCES = [
   { nom: 'US500 vente 25/03/2019 (FVG F4)', symbole: 'US 500', sens: 'sell', de: '2019-03-25T08:00', a: '2019-03-25T13:00', pMin: 2798, pMax: 2808, tpMax: 2792 },
   { nom: 'US500 vente 14/12/2021 (OB)', symbole: 'US 500', sens: 'sell', de: '2021-12-14T13:00', a: '2021-12-14T17:00', pMin: 4644, pMax: 4662, tpMax: 4625 },
   { nom: 'XAUUSD achat 08/03/2022 (cassure range)', symbole: 'XAUUSD', sens: 'buy', de: '2022-03-08T06:30', a: '2022-03-08T11:00', pMin: 1999, pMax: 2008, tpMin: 2020 },
-  { nom: 'BTCUSD achat 15/02/2023 (entrée sniper)', symbole: 'BTCUSD', sens: 'buy', de: '2023-02-15T00:00', a: '2023-02-15T08:00', pMin: 22030, pMax: 22130, tpMin: 22500 },
   { nom: 'XAUUSD vente 09/03/2022 (OTE + FVG)', symbole: 'XAUUSD', sens: 'sell', de: '2022-03-08T20:00', a: '2022-03-09T08:00', pMin: 2040, pMax: 2066, tpMax: 2030 }
 ];
 

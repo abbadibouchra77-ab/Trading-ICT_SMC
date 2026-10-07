@@ -16,7 +16,7 @@ Coûts : spread moyen par actif (voir `backtest/lancer.js`). PF = total des gain
 - XAUUSD achat du 08/03/2022 (cassure de range, FVG 50 %) : reproduit par le moteur AMD.
 - US 500 vente du 14/12/2021 (OB) : non reproduit (le rebond précède la confirmation du pivot).
 - XAUUSD vente du 09/03/2022 : non reproduit.
-- BTCUSD achat du 15/02/2023 (entrée sniper à 22046, stop 21854, cible 22817) : non reproduit. La POI est un **order block D1** (21351-21895) : le bot le reconnaît maintenant (POI multi-unités H4 + D1, OB en direct) et valide la jambe d'impulsion (21532,8 → 22319,1), mais l'entrée de 22046 est à ~35 % de cette jambe, hors de la bande OTE 50-78 %. L'entrée correspond plutôt à la base de la 2e impulsion (22046 = bas de la bougie de 18:00) ; le stop (21854) est sous le repli de 21860.
+- BTCUSD achat du 15/02/2023 : écarté des références (trade jugé trop complexe pour un bot).
 
 ## Résultats (net de spread)
 - POI H4 seule, H4+D1, avec ou sans OB en direct : PF 0,88 à 0,93 sur les trois périodes, donc aucune amélioration en élargissant les POI.
