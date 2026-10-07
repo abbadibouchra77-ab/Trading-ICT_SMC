@@ -46,7 +46,7 @@ test('Lecture CSV (séparateurs, formats d\'heure) et regroupement M1 -> M15', f
 
 test('Trade gagnant : remplissage au FVG, TP1, break-even, TP2', function () {
   const g = suite(histoireAchat(), [[-20, 8], [-26, 4], [0, 8], [40, 16], [80, 40], [110, 60]]);
-  const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01' });
+  const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01', reglagesMoteur: { strategie: 'lecture' } });
   const t = tradeHistoire(r);
   assert.ok(t, JSON.stringify(r.trades.map(function (x) { return x.statut; })));
   assert.strictEqual(t.statut, 'clôturé');
@@ -55,7 +55,7 @@ test('Trade gagnant : remplissage au FVG, TP1, break-even, TP2', function () {
 
 test('Trade perdant : stop sous le point A (-1R)', function () {
   const g = suite(histoireAchat(), [[-20, 8], [-26, 4], [-50, 8], [-85, 16]]);
-  const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01' });
+  const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01', reglagesMoteur: { strategie: 'lecture' } });
   const t = tradeHistoire(r);
   assert.strictEqual(t.statut, 'clôturé');
   assert.ok(Math.abs(t.R + 1) < 0.05, 'R = ' + t.R);
@@ -63,7 +63,7 @@ test('Trade perdant : stop sous le point A (-1R)', function () {
 
 test('Ordre jamais touché : expiré, 0R', function () {
   const g = suite(histoireAchat(), [[5, 8], [10, 30]]);
-  const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01' });
+  const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01', reglagesMoteur: { strategie: 'lecture' } });
   // l'ordre est replacé tant que le setup tient, mais jamais rempli : aucun trade clôturé, 0R
   assert.ok(r.trades.length > 0 && r.trades.every(function (t) { return t.statut !== 'clôturé' && t.R === 0; }), JSON.stringify(r.trades.map(function (t) { return t.statut; })));
 });

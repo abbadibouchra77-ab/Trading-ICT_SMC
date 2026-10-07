@@ -22,6 +22,7 @@
 
 // ------------------------------- Réglages -------------------------------------------
 const REGLAGES = {
+  strategie: 'AMD',        // stratégie active : 'AMD' (seule, demande du 08/10/2026) ; 'lecture' = l'ancienne lecture par scénarios
   rrMin: 2,                // TP1 à au moins 2R
   margeStopAtr: 0.15,      // stop au-delà du point A, avec une marge de 0,15 ATR (UT du contexte)
   porteeTP: 1.5,           // TP1 à portée : pas plus loin que 1,5 fois la jambe depuis l'entrée
@@ -843,6 +844,154 @@ function analyserCote(d, dc, S, ctx, R) {
   return res;
 }
 
+// ======================================================================================
+// Stratégie AMD (la seule stratégie active, demande du 08/10/2026)
+// « L'arme fatale de la Smart Money », sur toutes les unités de temps (H4, H1, M15) :
+//   A = accumulation : un range (le prix tourne entre un haut et un bas touchés plusieurs fois).
+//   Deux suites possibles :
+//   1. Manipulation puis distribution : une ou plusieurs mèches sortent du range d'un côté (la liquidité
+//      est prise) et le prix revient dedans ; puis une grande bougie de déplacement, avec du volume,
+//      part dans l'autre sens. On suit la distribution.
+//   2. Cassure franche : pas de mèche, une ou plusieurs bougies pleines clôturent hors du range.
+//      Le prix va continuer dans ce sens. On suit la cassure.
+//   Entrée : ordre limite au 50 % du FVG laissé par le déplacement (sinon au milieu de la bougie de
+//   déplacement), au retour du prix. Stop au-delà de la mèche de manipulation (cas 1) ou sous le milieu
+//   du range (cas 2). TP1 : première liquidité (ou projection du range) à 2R au moins.
+// Comme partout, on code l'achat ; la vente est l'achat sur le graphique retourné (miroir).
+// ======================================================================================
+
+// Le range qui se termine juste avant la bougie j : entre 12 et 96 bougies, hauteur de 1 à 6 ATR,
+// au moins 2 touches séparées du haut et du bas, sans direction (efficacité < 0,35). On garde le plus long.
+function rangeAMD(bs, j, atr) {
+  let meilleur = null;
+  for (const W of [12, 16, 24, 32, 48, 64, 96]) {
+    const e = j - 1, d0 = e - W + 1;
+    if (d0 < 1) break;
+    let hi = -Infinity, lo = Infinity, chemin = 0;
+    for (let i = d0; i <= e; i++) { hi = Math.max(hi, bs[i].h); lo = Math.min(lo, bs[i].l); if (i > d0) chemin += Math.abs(bs[i].c - bs[i - 1].c); }
+    const h = hi - lo;
+    if (h < 1.0 * atr || h > 6 * atr) continue;
+    let th = 0, tl = 0, presH = false, presL = false;
+    for (let i = d0; i <= e; i++) {
+      const pH = bs[i].h >= hi - 0.15 * h, pL = bs[i].l <= lo + 0.15 * h;
+      if (pH && !presH) th++; if (pL && !presL) tl++;
+      presH = pH; presL = pL;
+    }
+    const eff = chemin > 0 ? Math.abs(bs[e].c - bs[d0].c) / chemin : 1;
+    if (th >= 2 && tl >= 2 && eff < 0.35) meilleur = { debut: d0, fin: e, haut: hi, bas: lo, hauteur: h, bougies: W };
+  }
+  return meilleur;
+}
+
+// Les AMD d'achat d'une unité de temps, du plus récent au plus ancien (sur les `recul` dernières bougies).
+function amdAchat(bs, ut, atr, recul) {
+  const n = bs.length, out = [];
+  for (let j = n - 1; j >= Math.max(30, n - recul); j--) {
+    const rg = rangeAMD(bs, j, atr);
+    if (!rg) continue;
+    const milieu = (rg.haut + rg.bas) / 2;
+    const cm = moyenne(bs.slice(Math.max(0, j - 20), j).map(corps));
+    const vm = volumeMoyen(bs, j, 20);
+    // Cas 1 : mèche(s) sous le range qui reviennent dedans, puis déplacement haussier avec volume
+    let m = j, plusBas = Infinity;
+    while (m < n && m <= j + 3 && bs[m].l < rg.bas && bs[m].c >= rg.bas - 0.1 * rg.hauteur && Math.min(bs[m].o, bs[m].c) - bs[m].l >= 0.3 * (bs[m].h - bs[m].l)) { plusBas = Math.min(plusBas, bs[m].l); m++; }
+    if (m > j) {
+      let q = -1;
+      for (let k = m; k < Math.min(n, m + 4); k++) {
+        const b = bs[k];
+        if (b.c < plusBas) break;
+        if (b.c > b.o && corps(b) >= 1.5 * cm && (vm <= 0 || b.v >= 1.3 * vm) && b.c > milieu) { q = k; break; }
+      }
+      if (q >= 0) { out.push({ cas: 'manipulation', ut: ut, rg: rg, i: j, q: q, extreme: plusBas, nbMeches: m - j }); continue; }
+    }
+    // Cas 2 : cassure franche du haut du range par une ou plusieurs bougies pleines (sans mèche de manipulation)
+    let q2 = -1;
+    for (let k = j; k < Math.min(n, j + 3); k++) {
+      const b = bs[k];
+      if (b.l < rg.bas) break;
+      const pleine = b.c > b.o && corps(b) >= 0.6 * (b.h - b.l) && corps(b) >= 1.2 * cm;
+      if (!pleine) break;
+      if (b.c > rg.haut + 0.1 * atr) { q2 = k; break; }
+    }
+    if (q2 >= 0) out.push({ cas: 'cassure', ut: ut, rg: rg, i: j, q: q2, extreme: milieu, nbMeches: 0 });
+  }
+  return out;
+}
+
+function analyserAMD(d, dc, S, ctx, R) {
+  const mot = S > 0 ? { achat: 'achat', haut: 'haut', bas: 'bas', sous: 'sous', hausse: 'haussier' } : { achat: 'vente', haut: 'bas', bas: 'haut', sous: 'au-dessus du', hausse: 'baissier' };
+  function P(x) { return Number.isFinite(x) ? +(S * x).toFixed(ctx.decimales) : null; }
+  const histoire = [], raisons = [];
+  const res = { sens: S > 0 ? 'buy' : 'sell', ok: false, raisons: raisons, histoire: histoire, points: [], note: 0 };
+  const M15 = d.M15, n15 = M15.length, prix = M15[n15 - 1].c;
+  const atr15 = dernier(atrSerie(M15, 14));
+  const series = [d.D1, d.H4, M15];
+  const niveaux = niveauxPeriodes(d).concat(sessions(M15, ctx.maintenant, d.inverse).niveaux)
+    .concat(niveauxPivots(d.D1, 2, 'D1', 120, d.inverse)).concat(niveauxPivots(d.H4, 2, 'H4', 150, d.inverse)).concat(niveauxPivots(d.H1, 2, 'H1', 200, d.inverse));
+  const cibles = niveaux.filter(function (nv) { return nv.cote === 'H' && prixNiveau(nv, ctx.maintenant) > prix && !dejaPris(nv, series); })
+    .map(function (nv) { return { p: prixNiveau(nv, ctx.maintenant), nom: nv.genre }; });
+  const UTS = [{ ut: 'H4', bs: d.H4, recul: 12 }, { ut: 'H1', bs: d.H1, recul: 16 }, { ut: 'M15', bs: M15, recul: 24 }];
+  const deja = ctx.legsDejaTradees.map(function (x) { return String(x).split('#')[0]; });
+  function enKZ(t) { const h = ny(t).hm; return R.killzones.filter(function (k) { return h >= k.debut && h < k.fin; })[0] || null; }
+
+  for (const c of UTS) {
+    const bs = c.bs, n = bs.length, atr = dernier(atrSerie(bs, 14));
+    const evts = amdAchat(bs, c.ut, atr, c.recul);
+    for (const e of evts) {
+      const rg = e.rg, q = e.q, cle = c.ut + '|AMD-' + e.cas + '|' + bs[q].t + '|' + res.sens;
+      const recit = 'AMD ' + c.ut + ' : range ' + P(rg.bas) + ' - ' + P(rg.haut) + ' (' + rg.bougies + ' bougies), ' +
+        (e.cas === 'manipulation' ? (e.nbMeches > 1 ? e.nbMeches + ' mèches' : 'mèche') + ' de manipulation ' + mot.sous + ' du range jusqu\'à ' + P(e.extreme) + ', puis déplacement ' + mot.hausse + ' avec volume (distribution)'
+                                  : 'cassure franche du ' + mot.haut + ' du range par bougie(s) pleine(s)');
+      function refus(msg) { raisons.push(recit + ' -> ' + msg); }
+      if (deja.indexOf(cle) >= 0) { refus('déjà tradé.'); continue; }
+      // invalidation : clôture sous la mèche (cas 1) ou retour sous le milieu du range (cas 2)
+      let mort = false; for (let k = q + 1; k < n; k++) if (bs[k].c < e.extreme) { mort = true; break; }
+      if (mort) { refus('invalidé (le prix est revenu ' + mot.sous + ' ' + (e.cas === 'manipulation' ? 'la mèche' : 'milieu du range') + ').'); continue; }
+      // entrée : 50 % du FVG laissé par le déplacement, sinon milieu de la bougie de déplacement
+      let entree, typeEntree;
+      const k1 = [q, q + 1].filter(function (k) { return k + 1 < n && k >= 1 && bs[k + 1].l > bs[k - 1].h; })[0];
+      if (k1 !== undefined) { entree = (bs[k1 + 1].l + bs[k1 - 1].h) / 2; typeEntree = 'FVG ' + c.ut + ' du déplacement (50 %)'; }
+      else { entree = (bs[q].o + bs[q].c) / 2; typeEntree = 'milieu de la bougie de déplacement ' + c.ut; }
+      const tSignal = bs[q].t + DUREE[c.ut];
+      let touche = false; for (let k = n15 - 1; k >= 0 && M15[k].t >= tSignal; k--) if (M15[k].l <= entree) { touche = true; break; }
+      if (touche) { refus('le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : on ne court pas après.'); continue; }
+      if (prix <= entree) { refus('le prix est déjà sous l\'entrée.'); continue; }
+      const stopPx = e.extreme - 0.1 * atr;
+      const risque = entree - stopPx;
+      if (!(risque > 0.3 * atr15)) { refus('stop trop serré.'); continue; }
+      // objectifs : liquidité au-dessus et projection du range (1 et 2 hauteurs au-dessus du haut du range)
+      const portee = rg.haut + 3 * rg.hauteur;
+      const toutes = cibles.concat([{ p: rg.haut, nom: mot.haut + ' du range' }, { p: rg.haut + rg.hauteur, nom: 'projection du range (x1)' }, { p: rg.haut + 2 * rg.hauteur, nom: 'projection du range (x2)' }])
+        .filter(function (x) { return x.p > entree && x.p <= portee; }).sort(function (a, b) { return a.p - b.p; });
+      const tps = toutes.filter(function (x) { return (x.p - entree) / risque >= R.rrMin; });
+      if (!tps.length) { refus('pas d\'objectif à ' + R.rrMin + 'R au moins.'); continue; }
+      const tp1 = tps[0], tp2 = toutes.filter(function (x) { return x.p > tp1.p + 0.5 * risque; })[0] || null;
+      // confirmations (notées, jamais bloquantes)
+      const points = [];
+      const vm = volumeMoyen(bs, q, 20);
+      if (vm > 0) points.push('volume du déplacement : ' + (bs[q].v / vm).toFixed(1) + ' fois la moyenne');
+      if (k1 !== undefined) points.push('FVG laissé par le déplacement');
+      const kz = enKZ(ctx.maintenant); if (kz) points.push('ordre placé en killzone ' + kz.nom);
+      if (dc && smt(M15, dc.M15, n15 - 1, 40)) points.push('SMT avec ' + ctx.correle);
+      histoire.push('Contexte : ' + recit + '.');
+      res.ok = true; res.grade = 'AMD'; res.note = points.length; res.points = points; res.confirmations = points;
+      res.scenario = 'AMD ' + e.cas + ' ' + c.ut; res.modeEntree = 'FVG'; res.cleMouvement = cle;
+      res.entree = P(entree); res.stop = P(stopPx); res.typeEntree = typeEntree;
+      res.tp1 = P(tp1.p); res.tp1Nom = tp1.nom; res.rr1 = +((tp1.p - entree) / risque).toFixed(2);
+      res.tp2 = tp2 ? P(tp2.p) : null; res.tp2Nom = tp2 ? tp2.nom : null; res.rr2 = tp2 ? +((tp2.p - entree) / risque).toFixed(2) : null;
+      res.pointA = P(e.extreme); res.pointB = P(rg.haut); res.killzone = kz ? kz.nom : 'hors killzone';
+      res.expireA = new Date(ctx.maintenant + R.dureeOrdre * 3600000).toISOString();
+      res.liquidite = e.cas === 'manipulation' ? 'liquidité ' + mot.sous + ' du range prise jusqu\'à ' + P(e.extreme) : 'liquidité au-delà du ' + mot.haut + ' du range';
+      res.zone = 'range ' + c.ut + ' ' + P(rg.bas) + ' - ' + P(rg.haut) + ' ; entrée ' + typeEntree;
+      histoire.push('Ordre limite ' + mot.achat + ' à ' + res.entree + ' (' + typeEntree + '), stop ' + res.stop + (e.cas === 'manipulation' ? ' au-delà de la mèche' : ' au-delà du milieu du range') +
+        ', TP1 ' + tp1.nom + ' ' + res.tp1 + ' (' + res.rr1 + 'R)' + (tp2 ? ', TP2 ' + tp2.nom + ' ' + res.tp2 + ' (' + res.rr2 + 'R)' : '') + '.');
+      return res;
+    }
+  }
+  if (!raisons.length) raisons.push('Aucune AMD en cours (ni manipulation + distribution, ni cassure franche d\'un range) en H4, H1 ou M15.');
+  return res;
+}
+
 function decimalesDe(bs) {
   let d = 0;
   for (const b of bs.slice(-50)) { const s = String(b.c); const k = s.indexOf('.'); if (k >= 0) d = Math.max(d, s.length - k - 1); }
@@ -876,8 +1025,9 @@ function analyserActif(symbole, brut, correle, maintenant, etat, options) {
   const ctx = { maintenant: maintenant, decimales: decimalesDe(d.M15), legsDejaTradees: (etat && etat.legsDejaTradees) || [], crypto: !!options.crypto, correle: options.correle || '' };
   const dm = { maintenant: maintenant, inverse: true };
   ['M15', 'H1', 'H4', 'D1', 'W1', 'MN'].forEach(function (u) { dm[u] = miroir(d[u]); });
-  const achat = analyserCote(d, dc, 1, ctx, R);
-  const vente = analyserCote(dm, dc ? { M15: miroir(dc.M15) } : null, -1, ctx, R);
+  const lire = R.strategie === 'AMD' ? analyserAMD : analyserCote;
+  const achat = lire(d, dc, 1, ctx, R);
+  const vente = lire(dm, dc ? { M15: miroir(dc.M15) } : null, -1, ctx, R);
   const ok = [achat, vente].filter(function (x) { return x.ok; });
   if (!ok.length) return { symbole: symbole, action: 'attendre', notes: notes, noteAchat: achat.note, noteVente: vente.note,
     raison: 'Achat : ' + achat.raisons.join(' ') + ' | Vente : ' + vente.raisons.join(' '), histoireAchat: achat.histoire, histoireVente: vente.histoire };
@@ -887,5 +1037,5 @@ function analyserActif(symbole, brut, correle, maintenant, etat, options) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { analyserActif, structureSwing, preparerBougies, structure, zones, pivots, rsiSerie, atrSerie, lireUT, balayagesBas, niveauxPivots, miroir, smt, sessions, ny, inducement, obEtFvgSuperposes, REGLAGES };
+  module.exports = { analyserActif, rangeAMD, amdAchat, structureSwing, preparerBougies, structure, zones, pivots, rsiSerie, atrSerie, lireUT, balayagesBas, niveauxPivots, miroir, smt, sessions, ny, inducement, obEtFvgSuperposes, REGLAGES };
 }

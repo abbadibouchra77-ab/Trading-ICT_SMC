@@ -25,8 +25,10 @@ function histoireAchat(o) {
   return g;
 }
 
+// (ces histoires testent l'ancienne lecture par scénarios, gardée dans le moteur : strategie 'lecture')
 function analyser(bougies, etat, options, correle) {
-  return M.analyserActif('TEST', S.versBridge(bougies), correle ? { M15: correle.slice(-500) } : null, S.maintenantApres(bougies), etat || {}, options || {});
+  options = Object.assign({}, options || {}); options.reglages = Object.assign({ strategie: 'lecture' }, options.reglages || {});
+  return M.analyserActif('TEST', S.versBridge(bougies), correle ? { M15: correle.slice(-500) } : null, S.maintenantApres(bougies), etat || {}, options);
 }
 
 const resultats = [];
@@ -106,6 +108,33 @@ test('Structure externe : un creux interne cassé n\'est pas un BOS, le strong l
   assert.ok(ev.some(function (e) { return e.dir === -1 && e.type === 'CHoCH'; }), 'clôture sous le strong low : CHoCH baissier');
 });
 
+// ---------- Stratégie AMD ----------
+// bougies M15 : range de 40 bougies entre 100 et 102, puis la suite donnée
+function grapheAMD(suite) {
+  // range : vagues de 8 bougies entre 100 et 102 (5 allers-retours)
+  const t0 = Date.parse('2026-01-05T00:00:00Z'), bs = [];
+  const vague = [100.2, 100.7, 101.2, 101.7, 101.9, 101.4, 100.9, 100.4];
+  let o = 100.2;
+  for (let i = 0; i < 48; i++) { const c = vague[i % 8]; bs.push({ t: t0 + i * 900000, o: o, h: Math.max(o, c) + 0.1, l: Math.min(o, c) - 0.1, c: c, v: 100 }); o = c; }
+  suite.forEach(function (x, k) { bs.push({ t: t0 + (48 + k) * 900000, o: x[0], h: x[1], l: x[2], c: x[3], v: x[4] || 100 }); });
+  return bs;
+}
+test('AMD : mèche(s) sous le range puis déplacement haussier avec volume = manipulation + distribution', function () {
+  const bs = grapheAMD([[100.4, 100.6, 99.2, 100.3], [100.3, 100.5, 99.3, 100.2], [100.2, 102.4, 100.1, 102.3, 300], [102.3, 102.9, 102.6, 102.8]]);
+  const e = M.amdAchat(bs, 'M15', 1, 10);
+  assert.ok(e.length && e[0].cas === 'manipulation' && e[0].nbMeches === 2, JSON.stringify(e.map(function (x) { return x.cas + x.nbMeches; })));
+  assert.ok(Math.abs(e[0].extreme - 99.2) < 1e-9, 'stop de référence : la plus basse des mèches');
+});
+test('AMD : cassure franche du haut du range par une bougie pleine = continuation', function () {
+  const bs = grapheAMD([[100.4, 102.7, 100.3, 102.6], [102.6, 102.9, 102.5, 102.8]]);
+  const e = M.amdAchat(bs, 'M15', 1, 10);
+  assert.ok(e.length && e[0].cas === 'cassure', JSON.stringify(e.map(function (x) { return x.cas; })));
+});
+test('AMD : une mèche sous le range sans déplacement ni volume n\'est pas une AMD', function () {
+  const bs = grapheAMD([[100.4, 100.6, 99.2, 100.3], [100.3, 100.9, 100.2, 100.8], [100.8, 101.0, 100.6, 100.9]]);
+  assert.ok(!M.amdAchat(bs, 'M15', 1, 10).some(function (x) { return x.cas === 'manipulation'; }));
+});
+
 test('Range : pas de trade dedans', function () {
   const g = new S.Constructeur(Date.parse('2026-05-04T00:00:00Z'), 2000);
   for (let k = 0; k < 120; k++) g.vers(2000 + (k % 2 ? 15 : -15), 96, 1.2);
@@ -115,7 +144,7 @@ test('Range : pas de trade dedans', function () {
 test('Bougie en cours ignorée : seules les bougies clôturées comptent', function () {
   const b = histoireAchat().b;
   // « maintenant » tombe au milieu de la dernière bougie : même décision que sans cette bougie
-  const enCours = M.analyserActif('TEST', S.versBridge(b), null, Date.parse(b[b.length - 1].time) + 5 * 60000, {}, {});
+  const enCours = M.analyserActif('TEST', S.versBridge(b), null, Date.parse(b[b.length - 1].time) + 5 * 60000, {}, { reglages: { strategie: 'lecture' } });
   const sansElle = analyser(b.slice(0, -1));
   assert.strictEqual(enCours.action, sansElle.action);
   assert.strictEqual(enCours.entree, sansElle.entree);
