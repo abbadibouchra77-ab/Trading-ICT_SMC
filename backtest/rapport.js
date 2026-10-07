@@ -57,7 +57,7 @@ function ecrire(resultats, capital, sortie, args) {
   lignes.push('');
   lignes.push(ENTETE);
   const parSc = {};
-  tous.forEach(function (t) { [t.scenario || '?', 'qualité ' + (t.grade || '?')].forEach(function (k) { (parSc[k] = parSc[k] || []).push(t); }); });
+  tous.forEach(function (t) { [t.scenario || '?', 'qualité ' + (t.grade || '?'), 'entrée ' + (t.modeEntree === 'rejet' ? 'sur rejet' : 'après MSS')].forEach(function (k) { (parSc[k] = parSc[k] || []).push(t); }); });
   Object.keys(parSc).sort().forEach(function (k) { lignes.push(ligneStats(k, stats(parSc[k]))); });
   lignes.push('');
   lignes.push('## Par actif et par année (en R)');

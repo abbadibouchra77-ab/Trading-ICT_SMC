@@ -149,7 +149,7 @@ function backtesterActif(actif, brut, brutCorrele, options) {
     const r = moteur.analyserActif(actif.symbol, f, fc, maintenant, { legsDejaTradees: legs }, { crypto: !!actif.crypto, correle: actif.correle || '', reglages: regl.reglagesMoteur });
     if (r.action !== 'trader') continue;
     const issue = suivreTrade(bs, n, r, regl.spread, regl);
-    trades.push(Object.assign({ symbole: actif.symbol, sens: r.sens, note: r.note, grade: r.grade, scenario: r.scenario, entree: r.entree, stop: r.stop, tp1: r.tp1, tp2: r.tp2, rr1: r.rr1, rr2: r.rr2,
+    trades.push(Object.assign({ symbole: actif.symbol, sens: r.sens, note: r.note, grade: r.grade, scenario: r.scenario, modeEntree: r.modeEntree, entree: r.entree, stop: r.stop, tp1: r.tp1, tp2: r.tp2, rr1: r.rr1, rr2: r.rr2,
       killzone: r.killzone, cle: r.cleMouvement, confirmations: r.confirmations }, issue));
     if (issue.statut !== 'expiré') legs.push(r.cleMouvement); // comme le journal : un mouvement exécuté n'est plus retradé
     libreA = issue.tFin + 1;
