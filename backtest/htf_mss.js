@@ -41,6 +41,8 @@ const DEFAUT = {
   pivotLiquidite: 3,    // sommets pivots pour les objectifs
   rechercheLiquidite: 300,
   entree: 'fvg',        // 'fvg' (50 % du FVG du MSS, sinon corps) ou 'marche'
+  stopMode: 'creux',    // 'creux' (sous le creux du retour), 'poi' (sous le bas de la POI HTF si plus bas), 'recul' (sous le plus bas des stopRecul dernières bougies M15 : origine de la jambe)
+  stopRecul: 96,        // mode 'recul' : nombre de bougies M15 regardées (96 = 24 h)
   margeStop: 0.1,       // marge sous le creux, en ATR M15
   stopMinAtr: 0.3,      // stop trop serré : on refuse
   rrMin: 1,             // la première liquidité doit offrir au moins 1 R
@@ -184,7 +186,10 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
         if (!ok.length) continue;                            // pas de zone, ou le prix est déjà sous elle
         entree = ok[0].e; type = ok[0].t;
       }
-      const stop = bs[m.iBas].l - P.margeStop * atr, risque = entree - stop;
+      let base = bs[m.iBas].l;
+      if (P.stopMode === 'poi') base = Math.min(base, z.bas);
+      else if (P.stopMode === 'recul') for (let q = Math.max(0, k - P.stopRecul); q <= k; q++) base = Math.min(base, bs[q].l);
+      const stop = base - P.margeStop * atr, risque = entree - stop;
       if (!(risque >= P.stopMinAtr * atr)) continue;
       // 5. première liquidité
       const liq = liquidites(bs, k, entree, P, veille[k]);
