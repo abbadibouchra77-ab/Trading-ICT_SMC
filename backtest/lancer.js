@@ -2,6 +2,7 @@
 // Usage :
 //   node backtest/lancer.js --donnees <dossier des CSV> [--depuis 2021-01-01] [--jusqua 2025-12-31]
 //                           [--capital 10000] [--sortie resultats] [--actifs XAUUSD,EURUSD] [--sans-prefiltre]
+//                           [--note-min 20]  (note A++ minimale, pour le réglage ; sinon celle du moteur)
 // Un CSV par actif ; le nom du fichier doit contenir le symbole broker ou le nom usuel
 // (ex. « XAUUSD.csv », « US TECH 100_M15.csv », « NAS100.csv »).
 // Résultat : <sortie>/rapport.md, trades.csv, resultats.json (+ un fichier par actif).
@@ -46,7 +47,7 @@ if (!isMainThread) {
   const brut = lireCSV(w.fichier);
   if (brut.length < 1000) throw new Error(w.fichier + ' : seulement ' + brut.length + ' bougies lisibles');
   const brutC = w.fichierCorrele ? lireCSV(w.fichierCorrele) : null;
-  const res = backtesterActif(w.actif, brut, brutC, { spread: w.actif.spread, depuis: w.depuis, jusqua: w.jusqua, preFiltre: w.preFiltre });
+  const res = backtesterActif(w.actif, brut, brutC, { spread: w.actif.spread, depuis: w.depuis, jusqua: w.jusqua, preFiltre: w.preFiltre, reglagesMoteur: w.noteMin ? { noteMin: w.noteMin } : {} });
   res.secondes = Math.round((Date.now() - t0) / 1000);
   parentPort.postMessage(res);
 } else {
@@ -68,7 +69,7 @@ if (!isMainThread) {
     if (!f) { console.log('  (pas de fichier pour ' + a.symbol + ')'); continue; }
     const c = a.correle ? ACTIFS.find(function (x) { return x.symbol === a.correle; }) : null;
     const fc = c ? trouverFichier(args.donnees, c) : null;
-    travaux.push({ actif: a, fichier: f, fichierCorrele: fc, depuis: args.depuis || null, jusqua: args.jusqua || null, preFiltre: !args['sans-prefiltre'] });
+    travaux.push({ actif: a, fichier: f, fichierCorrele: fc, depuis: args.depuis || null, jusqua: args.jusqua || null, preFiltre: !args['sans-prefiltre'], noteMin: args['note-min'] ? Number(args['note-min']) : null });
   }
   const nbTravailleurs = Math.max(1, Math.min(require('os').cpus().length, travaux.length));
   const resultats = [];
