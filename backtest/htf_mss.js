@@ -46,6 +46,8 @@ const DEFAUT = {
   fenetreJambe: 96,     // mode 'ote' : la jambe doit se terminer dans les 96 bougies M15
   poiLive: false,       // mode 'ote' : la POI HTF (FVG) est suivie EN DIRECT dès l'ouverture de sa 3e bougie, sans attendre la clôture
   annulerSiCible: true, // un ordre limite est ANNULÉ si le prix touche la cible (ou le stop) avant d'être rempli
+  legPivot: 2,          // mode 'ote2' : un sommet est confirmé quand il est le plus haut des 2 bougies de chaque côté
+  fenetreOte2: 600,     // mode 'ote2' : une POI sert pendant 600 bougies M15 après son MSS
   mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
   sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
   sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
@@ -424,6 +426,50 @@ function ordreCaduc(M15, k0, sig, dirSens, nBougies) {
   return false;
 }
 
+// Mode « ote2 » : après le MSS (POI HTF touchée), CHAQUE jambe (creux -> sommet pivot confirmé) crée sa propre zone OTE :
+// bande 50-78 % de retracement de CETTE jambe ; FVG / OB dont le 50 % est dans la bande -> ordre limite, stop sous le creux de la jambe,
+// cible = première liquidité. Une jambe qui prolonge le mouvement (BOS) donne donc un nouvel ordre. Fini quand le creux du MSS est repris.
+function setupsOte2(bs, H, atrs, P, depuis, jusqua) {
+  const htfMs = P.htf * 60000, zs = poiHtf(H, htfMs, P), veille = plusHautsVeille(bs), out = [], L = P.legPivot;
+  let prochaine = 0, actives = [];
+  for (let k = 60; k < bs.length - 1; k++) {
+    const t = bs[k].t + 15 * 60000, atr = atrs[k];
+    while (prochaine < zs.length && zs[prochaine].dispo <= t) { actives.push(zs[prochaine]); prochaine++; }
+    actives = actives.filter(function (z) { return !z.utilise && (z.leg2 || bs[k].c >= z.bas) && t - z.dispo <= P.ageMax * htfMs; });
+    const actif = Number.isFinite(atr) && t >= depuis && bs[k].t <= jusqua;
+    for (const z of actives) {
+      if (z.live && bs[k].t < z.fin) { z.haut = Math.min(z.haut, bs[k].l); if (z.haut <= z.bas) { z.utilise = true; continue; } }
+      else if (z.live && !z.verifie) { z.verifie = true; if (z.haut - z.bas < z.minAtrH) { z.utilise = true; continue; } }
+      if (z.touche < 0) { if (bs[k].l <= z.haut) z.touche = k; else continue; }
+      if (!actif) continue;
+      const g = z.leg2;
+      if (!g) {                                                    // POI touchée : on attend le MSS
+        const m = chercherMss(bs, k, z, Object.assign({}, P, { fenetreMss: P.fenetreJambe }));
+        if (m) z.leg2 = { iBas0: m.iBas, k0: k, debut: m.iBas };
+        continue;
+      }
+      if (bs[k].l < bs[g.iBas0].l || k - g.k0 > P.fenetreOte2) { z.utilise = true; continue; }   // structure cassée, ou trop vieux
+      const p = k - L;
+      if (p <= g.debut || !pivotHaut(bs, p, L)) continue;          // sommet pivot confirmé à la clôture de k
+      let iA = g.debut; for (let q = g.debut; q <= p; q++) if (bs[q].l < bs[iA].l) iA = q;     // creux de la jambe
+      const B = bs[p].h;
+      g.debut = p;                                                 // la jambe suivante part de ce sommet
+      if (B - bs[iA].l < P.jambeMinAtr * atr) continue;
+      const o = ordreOte(bs, iA, k, B, P, atr);
+      if (!o) continue;
+      const stop = bs[iA].l - P.margeStop * atr, risque = o.e - stop;
+      if (!(risque >= P.stopMinAtr * atr)) continue;
+      const liq = liquidites(bs, k, o.e, P, veille[k]);
+      if (!liq.length) continue;
+      const tp1 = liq[0] - P.margeCible * atr;
+      if ((tp1 - o.e) / risque < P.rrMin) continue;
+      out.push({ k: k, t: t, groupe: z, entree: o.e, stop: stop, tp1: tp1, tp2: null, type: (o.ob ? 'OB' : 'FVG') + ' OTE (jambe)', atr: atr, zone: z, mss: null, lect: null, expireBars: P.dureeSniper,
+        ote: { iBas: iA, lo: bs[iA].l, hi: B, fi: o.i, k: k } });
+    }
+  }
+  return out;
+}
+
 function backtesterActif(actif, M15, P, depuis, jusqua) {
   const bs = versBs(M15), bm = miroir(bs);
   const H = versBs(P.htf === 15 ? M15 : regrouper(M15, P.htf)), Hm = miroir(H);
@@ -433,7 +479,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
   const tous = [];
   for (const S of [1, -1]) {
     const g = S > 0 ? bs : bm;
-    for (const s of (P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
+    for (const s of (P.mode === 'ote2' ? setupsOte2 : P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
   }
   tous.sort(function (a, b) { return a.s.t - b.s.t; });
   const trades = [];
@@ -451,7 +497,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
       expireA: new Date(s.t + (s.expireBars || P.dureeOrdre) * 15 * 60000).toISOString() };
     if (P.annulerSiCible && ordreCaduc(M15, s.k + 1, sig, sig.sens, s.expireBars || P.dureeOrdre)) continue;
     const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
-    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
+    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'ote2' ? 'HTF + MSS puis OTE par jambe (' : P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
       mss: !s.mss ? null : { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
       ote: s.ote ? { tOrigine: bs[s.ote.iBas].t, prixOrigine: S * s.ote.lo, prixExtreme: S * s.ote.hi, tFvg: bs[s.ote.fi - 2].t, fvgBas: Math.min(S * (S > 0 ? bs : bm)[s.ote.fi - 2].h, S * (S > 0 ? bs : bm)[s.ote.fi].l), fvgHaut: Math.max(S * (S > 0 ? bs : bm)[s.ote.fi - 2].h, S * (S > 0 ? bs : bm)[s.ote.fi].l), tOrdre: bs[s.ote.k].t,
