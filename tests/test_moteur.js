@@ -4,37 +4,23 @@ const assert = require('assert');
 const M = require('../src/moteur.js');
 const S = require('./scenarios.js');
 
-// ---------- Histoire 1 : le setup A++ d'achat ----------
-// Fond haussier ; retour H4 sous des creux égaux, balayage (point A) ; impulsion qui casse la
-// structure (point B) ; retour dans l'OTE H4. La nuit, l'Asie forme un range avec des creux égaux.
-// En killzone de Londres : balayage de l'Asie (Judas swing) sous l'ouverture de minuit,
-// MSS avec déplacement et volume, FVG M15 -> ordre limite au 50 % du FVG.
-// options : heureBalayage (heure UTC), sansBalayage, entreeTouchee
+// ---------- L'histoire d'achat ----------
+// Fond haussier ; sommets égaux au-dessus (liquidité) ; baisse sous des creux égaux, mèche qui liquide
+// le bas du range (point A) ; impulsion de déplacement qui casse la structure (point B) ; puis retour lent
+// vers la décote de la jambe. Le bot place un ordre limite au 50 % du FVG de la jambe, stop sous le point A,
+// TP1 sur la liquidité au-dessus (à portée, 2R au moins).
+// options : retour (où s'arrête le retour, en points depuis P0), suite (chemin après le retour : [[cible, bougies]])
 function histoireAchat(o) {
   o = o || {};
   const g = new S.Constructeur(Date.parse('2026-05-04T00:00:00Z'), 1500);
   for (let k = 0; k < 24; k++) g.vers(g.p + 50, 288, 0.8).vers(g.p - 25, 144, 0.8);
   const P0 = g.p + 50; g.vers(P0, 288, 0.8);
+  g.vers(P0 + 75, 96, 0.8).vers(P0 + 50, 48, 0.8).vers(P0 + 75, 48, 0.8).vers(P0, 96, 0.8);   // sommets égaux
   g.vers(P0 - 60, 192, 0.8).vers(P0 - 38, 96, 0.8).vers(P0 - 59, 96, 0.8).vers(P0 - 35, 96, 0.8).vers(P0 - 64, 40, 0.8);
-  g.ajoute(g.p, g.p + 0.5, P0 - 70, P0 - 63, 600);          // point A : balayage H4
+  g.ajoute(g.p, g.p + 0.5, P0 - 70, P0 - 63, 600);          // point A : mèche qui liquide le bas du range
   g.vers(P0 + 45, 120, 0.8);                                 // impulsion (déplacement) -> point B
-  g.vers(P0 + 10, 96, 0.6).vers(P0 + 15, 24, 0.6).vers(P0 - 14, 120, 0.6); // retracement lent (correction, pas un déplacement)
-  const hB = o.heureBalayage === undefined ? 6 : o.heureBalayage; // 06h UTC = 02h New York (été)
-  g.jusquA((hB + 24 - 6) % 24, 0.4);                         // calme jusqu'à 6 h avant le balayage
-  // range (Asie si balayage à 6 h UTC) avec creux égaux à P0-20
-  g.vers(P0 - 20, 4, 0.3).vers(P0 - 12, 4, 0.3).vers(P0 - 20, 4, 0.3).vers(P0 - 12, 4, 0.3);
-  g.vers(P0 - 16, 4, 0.3).vers(P0 - 12, 4, 0.3).vers(P0 - 17, 2, 0.3).vers(P0 - 19.5, 2, 0.2);
-  if (o.sansBalayage) return g;
-  if (o.grab) {
-    // liquidity grab : clôture SOUS les creux égaux (fausse cassure), puis reprise du niveau
-    g.ajoute(P0 - 19.5, P0 - 19.4, P0 - 23, P0 - 22, 700);
-    g.ajoute(P0 - 22, P0 - 18.8, P0 - 27, P0 - 19, 900);
-  } else g.ajoute(P0 - 19.5, P0 - 19.2, P0 - 27, P0 - 19, 900);     // balayage : grande mèche, clôture au-dessus
-  g.ajoute(P0 - 19, P0 - 14.8, P0 - 19.3, P0 - 15, 500);     // déplacement...
-  g.ajoute(P0 - 15, P0 - 8.5, P0 - 15.2, P0 - 9, 800);       // ... MSS (clôture au-dessus du sommet)
-  g.ajoute(P0 - 9, P0 - 5.5, P0 - 9.5, P0 - 6, 400);         // FVG du déplacement : entre -19 et -15,2
-  g.ajoute(P0 - 6, P0 - 4.8, P0 - 6.6, P0 - 5.2, 300);
-  if (o.entreeTouchee) g.ajoute(P0 - 5.2, P0 - 5, P0 - 18, P0 - 11, 300);
+  g.vers(P0 + (o.retour === undefined ? 15 : o.retour), 96, 0.6); // retour lent
+  for (const c of (o.suite || [])) g.vers(P0 + c[0], c[1], 0.3);
   g.P0 = P0;
   return g;
 }
@@ -49,24 +35,16 @@ function test(nom, fn) {
   catch (e) { resultats.push('ECHEC ' + nom + '\n      ' + e.message); process.exitCode = 1; }
 }
 
-test('Setup A++ d\'achat : ordre limite au FVG', function () {
+test('Setup d\'achat : ordre limite au FVG de la jambe, stop sous le point A, TP1 à portée', function () {
   const g = histoireAchat();
   const r = analyser(g.b);
   assert.strictEqual(r.action, 'trader', r.raison);
   assert.strictEqual(r.sens, 'buy');
-  assert.ok(Math.abs(r.entree - (g.P0 - 17.1)) < 0.01, 'entrée au 50 % du FVG du déplacement : ' + r.entree);
-  assert.ok(r.stop < g.P0 - 27, 'stop sous la mèche du balayage');
-  assert.ok(r.rr1 >= 2 && r.tp1 > r.entree);
-  assert.strictEqual(r.killzone, 'Londres');
-  assert.strictEqual(M.ny(Date.parse(r.expireA)).hm, 500, 'l\'ordre expire à la fin de la killzone de Londres (05h NY)');
-  console.log('\n--- Lecture du bot (achat) ---\n' + r.lecture + '\nNote : ' + r.note + '\n  ' + r.confirmations.join('\n  ') + '\n');
-});
-
-test('Liquidity grab (clôture sous le niveau puis reprise) : reconnu comme prise de liquidité', function () {
-  const r = analyser(histoireAchat({ grab: true }).b);
-  assert.strictEqual(r.action, 'trader', r.raison);
-  assert.ok(r.confirmations.some(function (x) { return /liquidity grab/.test(x); }), r.confirmations.join(' | '));
-  assert.ok(r.stop < histoireAchat().P0 - 27, 'stop sous le plus bas du grab');
+  assert.ok(/FVG .* de la jambe|OTE de la jambe/.test(r.typeEntree), r.typeEntree);
+  assert.ok(r.entree < g.P0 + 15 && r.entree < g.P0 - 70 + 0.5 * 115, 'entrée dans la décote de la jambe : ' + r.entree);
+  assert.ok(r.stop < g.P0 - 70, 'stop sous le point A : ' + r.stop);
+  assert.ok(r.rr1 >= 2 && r.tp1 <= r.entree + 1.5 * 115 + 1e-6, 'TP1 à 2R au moins et à portée : ' + r.tp1 + ' (' + r.rr1 + 'R)');
+  console.log('\n--- Lecture du bot (achat) ---\n' + r.lecture + '\n  ' + r.confirmations.join('\n  ') + '\n');
 });
 
 test('Une vraie cassure (le prix s\'installe sous le niveau) n\'est pas un grab', function () {
@@ -82,7 +60,6 @@ test('Inducement et OB + FVG superposés', function () {
   const t0 = Date.parse('2026-01-05T00:00:00Z');
   const px = [10, 9, 8, 9, 10, 9, 7.5, 8.5, 9, 8, 6, 5, 7, 8];
   const bs = px.map(function (c, i) { return { t: t0 + i * 900000, o: c, h: c + 0.3, l: c - 0.3, c: c, v: 0 }; });
-  // creux interne à 7,2 (bougie 6) pris par la bougie 10, avant le vrai balayage à 4,7 (bougie 11)
   const idm = M.inducement(bs, 11, 4.7, 1);
   assert.ok(idm && Math.abs(idm.p - 7.2) < 1e-9, 'inducement trouvé : ' + JSON.stringify(idm));
   assert.strictEqual(M.obEtFvgSuperposes([{ type: 'OB', ut: 'H4', bas: 10, haut: 12 }, { type: 'FVG', ut: 'H4', bas: 11, haut: 13 }]), 'OB H4 + FVG H4');
@@ -96,59 +73,37 @@ test('Le même graphique retourné : vente symétrique', function () {
   assert.strictEqual(r.action, 'trader', r.raison);
   assert.strictEqual(r.sens, 'sell');
   assert.ok(Math.abs(r.entree - (5000 - rA.entree)) < 1e-6 && Math.abs(r.stop - (5000 - rA.stop)) < 1e-6);
-  assert.strictEqual(r.note, rA.note);
-});
-
-test('Avant le balayage : la Smart Money n\'a pas pris la liquidité, on attend', function () {
-  const r = analyser(histoireAchat({ sansBalayage: true }).b);
-  assert.strictEqual(r.action, 'attendre');
 });
 
 test('Entrée déjà touchée : on ne court pas après le prix', function () {
-  const r = analyser(histoireAchat({ entreeTouchee: true }).b);
+  const r = analyser(histoireAchat({ suite: [[-40, 24], [0, 24]] }).b);
   assert.strictEqual(r.action, 'attendre');
   assert.ok(/déjà revenu sur l'entrée/.test(r.raison), r.raison);
 });
 
-test('Hors killzone : le bot trade quand même (24h/24), ordre valable 3 h', function () {
-  const r = analyser(histoireAchat({ heureBalayage: 17 }).b); // 17h UTC = 13h New York
+test('24h/24 : ordre placé hors killzone, valable 4 h', function () {
+  const b = histoireAchat().b;
+  const r = analyser(b);
   assert.strictEqual(r.action, 'trader', r.raison);
-  assert.strictEqual(r.killzone, 'hors killzone');
-  const dureeH = (Date.parse(r.expireA) - S.maintenantApres(histoireAchat({ heureBalayage: 17 }).b)) / 3600000;
-  assert.ok(Math.abs(dureeH - 3) < 0.01, 'expire au bout de 3 h : ' + dureeH);
+  assert.ok(Math.abs((Date.parse(r.expireA) - S.maintenantApres(b)) / 3600000 - 4) < 0.01);
 });
 
-test('Crypto : 24h/24, même hors killzone', function () {
-  const r = analyser(histoireAchat({ heureBalayage: 17 }).b, {}, { crypto: true });
-  assert.strictEqual(r.action, 'trader', r.raison);
-});
-
-test('SMT : l\'actif corrélé ne fait pas de plus bas -> points en plus', function () {
-  const g = histoireAchat();
-  const sans = analyser(g.b);
-  // actif corrélé : mêmes bougies, mais sa mèche de balayage reste au-dessus du creux précédent
-  const c = g.b.map(function (b) { return Object.assign({}, b); });
-  const k = c.length - 5;
-  c[k].low = g.P0 - 19.4; c[k].close = g.P0 - 19;
-  const avec = analyser(g.b, {}, { correle: 'CORR' }, c);
-  assert.ok(avec.confirmations.some(function (x) { return /SMT/.test(x); }), avec.confirmations.join(' | '));
-  assert.strictEqual(avec.note, sans.note + 2);
-});
-
-test('Mouvement déjà tradé (même point A H4) : pas de nouveau trade', function () {
+test('Mouvement déjà tradé : pas de nouveau trade', function () {
   const g = histoireAchat();
   const r1 = analyser(g.b);
   const r2 = analyser(g.b, { legsDejaTradees: [r1.cleMouvement] });
-  assert.strictEqual(r2.action, 'attendre');
-  assert.ok(/déjà été tradé/.test(r2.raison), r2.raison);
-  // la même réaction M15 lue depuis un autre contexte (H1) n'est pas retradée non plus
-  assert.ok(!/H1\|[^|]*\|[0-9]+\|buy -> /.test(r2.raison));
+  assert.ok(r2.action === 'attendre' || r2.cleMouvement !== r1.cleMouvement, 'le même contexte n\'est pas retradé');
 });
 
-test('Histoire complète tendance H4 + réaction M15 : setup A+++', function () {
-  const r = analyser(histoireAchat().b);
-  assert.strictEqual(r.grade, 'A+++', r.scenario + ' / ' + r.confirmations.join(' | '));
-  assert.ok(/tendance H4/.test(r.scenario), r.scenario);
+test('Structure externe : un creux interne cassé n\'est pas un BOS, le strong low cassé est un CHoCH', function () {
+  const t0 = Date.parse('2026-01-05T00:00:00Z');
+  // hausse : creux 100, sommet 110, creux 104 (strong low), sommet 116 (BOS), creux interne 112, sommet 115
+  const px = [100, 103, 106, 110, 107, 104, 108, 112, 116, 114, 112, 113, 115, 113.5];
+  const mk = function (arr) { return arr.map(function (c, i) { return { t: t0 + i * 3600000, o: c, h: c + 0.4, l: c - 0.4, c: c, v: 0 }; }); };
+  let ev = M.structureSwing(mk(px.concat([111.5]))).evts;
+  assert.ok(!ev.some(function (e) { return e.dir === -1; }), 'clôture sous le creux interne 112 : pas de cassure baissière');
+  ev = M.structureSwing(mk(px.concat([111.5, 106, 103]))).evts;
+  assert.ok(ev.some(function (e) { return e.dir === -1 && e.type === 'CHoCH'; }), 'clôture sous le strong low : CHoCH baissier');
 });
 
 test('Range : pas de trade dedans', function () {

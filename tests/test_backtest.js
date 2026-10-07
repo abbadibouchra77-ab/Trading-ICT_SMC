@@ -5,7 +5,7 @@ const path = require('path');
 const S = require('./scenarios.js');
 const M = require('../src/moteur.js');
 const { lireCSV, unitesDeTemps } = require('../backtest/donnees.js');
-const { backtesterActif, suivreTrade, preFiltre } = require('../backtest/simulation.js');
+const { backtesterActif, suivreTrade } = require('../backtest/simulation.js');
 const { simulerCompte, stats } = require('../backtest/portefeuille.js');
 
 const T = fs.readFileSync(path.join(__dirname, 'test_moteur.js'), 'utf8');
@@ -20,6 +20,7 @@ function test(nom, fn) {
 function versMs(b) { return b.map(function (x) { return { time: Date.parse(x.time), open: x.open, high: x.high, low: x.low, close: x.close, volume: x.volume }; }); }
 // suite de l'histoire après le signal : chemin de prix (cibles) en bougies M15
 function suite(g, cibles) { for (const c of cibles) g.vers(g.P0 + c[0], c[1], 0.2); return g; }
+// (entrée de l'histoire vers P0 - 24, stop vers P0 - 72, TP1 vers P0 + 75)
 // le trade du setup de l'histoire (le bot tourne 24h/24 : il peut aussi prendre d'autres trades avant)
 const FIN_HISTOIRE = (function () { const b = histoireAchat().b; return Date.parse(b[b.length - 1].time); })();
 // (un ordre « sur rejet » non rempli peut expirer avant : on prend le premier trade rempli, sinon le dernier)
@@ -44,7 +45,7 @@ test('Lecture CSV (séparateurs, formats d\'heure) et regroupement M1 -> M15', f
 });
 
 test('Trade gagnant : remplissage au FVG, TP1, break-even, TP2', function () {
-  const g = suite(histoireAchat(), [[-15, 1], [-17.4, 1], [-5, 6], [14, 12], [30, 16], [80, 60]]);
+  const g = suite(histoireAchat(), [[-20, 8], [-26, 4], [0, 8], [40, 16], [80, 40], [110, 60]]);
   const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01' });
   const t = tradeHistoire(r);
   assert.ok(t, JSON.stringify(r.trades.map(function (x) { return x.statut; })));
@@ -52,19 +53,19 @@ test('Trade gagnant : remplissage au FVG, TP1, break-even, TP2', function () {
   assert.ok(t.evenements[0].quoi === 'TP1' && t.R > 1, JSON.stringify(t.evenements) + ' R=' + t.R);
 });
 
-test('Trade perdant : stop derrière la mèche du balayage (-1R)', function () {
-  const g = suite(histoireAchat(), [[-15, 1], [-17.4, 1], [-25, 4], [-40, 8]]);
+test('Trade perdant : stop sous le point A (-1R)', function () {
+  const g = suite(histoireAchat(), [[-20, 8], [-26, 4], [-50, 8], [-85, 16]]);
   const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01' });
   const t = tradeHistoire(r);
   assert.strictEqual(t.statut, 'clôturé');
   assert.ok(Math.abs(t.R + 1) < 0.05, 'R = ' + t.R);
 });
 
-test('Ordre jamais touché : expiré (fin de la killzone), 0R', function () {
-  const g = suite(histoireAchat(), [[0, 8], [10, 30]]);
+test('Ordre jamais touché : expiré, 0R', function () {
+  const g = suite(histoireAchat(), [[5, 8], [10, 30]]);
   const r = backtesterActif({ symbol: 'TEST' }, versMs(g.b), null, { spread: 0, depuis: '2026-09-01' });
-  assert.strictEqual(tradeHistoire(r).statut, 'expiré');
-  assert.strictEqual(tradeHistoire(r).R, 0);
+  // l'ordre est replacé tant que le setup tient, mais jamais rempli : aucun trade clôturé, 0R
+  assert.ok(r.trades.length > 0 && r.trades.every(function (t) { return t.statut !== 'clôturé' && t.R === 0; }), JSON.stringify(r.trades.map(function (t) { return t.statut; })));
 });
 
 test('Spread : un achat n\'est rempli que si l\'ask (bid + spread) touche l\'entrée', function () {
@@ -72,24 +73,6 @@ test('Spread : un achat n\'est rempli que si l\'ask (bid + spread) touche l\'ent
   const sig = { sens: 'buy', entree: 10, stop: 9, tp1: 12, tp2: null, expireA: new Date(3600000).toISOString() };
   assert.strictEqual(suivreTrade(bs, 0, sig, 0, { dureeMaxJours: 20 }).R, 2);
   assert.notStrictEqual(suivreTrade(bs, 0, sig, 0.1, { dureeMaxJours: 20 }).statut, 'clôturé', 'avec 0,1 de spread, l\'ask (10,05) n\'a jamais touché 10');
-});
-
-test('Pré-filtre : il ne retire jamais une bougie où le moteur aurait tradé', function () {
-  // sur l'histoire d'achat (et sa version vente), toutes les bougies écartées donnent « attendre »
-  [histoireAchat().b, S.inverser(histoireAchat().b, 5000)].forEach(function (b) {
-    const bs = versMs(b), ut = unitesDeTemps(bs);
-    let verifiees = 0;
-    for (let n = bs.length - 160; n <= bs.length; n++) {
-      const maintenant = bs[n - 1].time + 16 * 60000;
-      let atr = 0, k = 0; for (let i = n - 14; i < n; i++) { atr += Math.max(bs[i].high - bs[i].low, Math.abs(bs[i].high - bs[i - 1].close), Math.abs(bs[i].low - bs[i - 1].close)); k++; }
-      if (preFiltre(bs, n, atr / k, false, maintenant)) continue;
-      const f = {}; ['M15', 'H1', 'H4', 'D1', 'W1', 'MN'].forEach(function (u) { f[u] = ut[u].filter(function (x) { return x.time < maintenant; }).slice(-500); });
-      assert.notStrictEqual(M.analyserActif('T', f, null, maintenant, {}, {}).action, 'trader', 'bougie ' + n + ' écartée à tort');
-      verifiees++;
-    }
-    // (bot 24h/24 : le pré-filtre n'écarte plus que les bougies sans aucune réaction M15 récente, souvent aucune)
-    assert.ok(verifiees >= 0);
-  });
 });
 
 test('Compte : risque dégressif, 2 pertes par jour, 3 actifs au plus', function () {

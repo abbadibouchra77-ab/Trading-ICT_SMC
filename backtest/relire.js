@@ -30,5 +30,5 @@ for (const tPlace of temps) {
   const correle = utC ? { M15: fenetre(utC, maintenant).M15 } : null;
   const r = moteur.analyserActif(symbole, fenetre(ut, maintenant), correle, maintenant, { legsDejaTradees: [] }, { crypto: !!actif.crypto, correle: actif.correle || '' });
   console.log(JSON.stringify({ tPlace: tPlace, action: r.action, lecture: r.lecture || r.raison, scenario: r.scenario, grade: r.grade, pointA: r.pointA, pointB: r.pointB,
-    zone: r.zone, liquidite: r.liquidite, confirmations: r.confirmations || [], entree: r.entree, stop: r.stop }));
+    zone: r.zone, liquidite: r.liquidite, confirmations: r.confirmations || [], sens: r.sens, entree: r.entree, stop: r.stop, tp1: r.tp1, tp2: r.tp2, expireA: r.expireA }));
 }

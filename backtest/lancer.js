@@ -68,7 +68,7 @@ if (!isMainThread) {
     if (!f) { console.log('  (pas de fichier pour ' + a.symbol + ')'); continue; }
     const c = a.correle ? ACTIFS.find(function (x) { return x.symbol === a.correle; }) : null;
     const fc = c ? trouverFichier(args.donnees, c) : null;
-    travaux.push({ actif: a, fichier: f, fichierCorrele: fc, depuis: args.depuis || null, jusqua: args.jusqua || null, preFiltre: !args['sans-prefiltre'] });
+    travaux.push({ actif: a, fichier: f, fichierCorrele: fc, depuis: args.depuis || null, jusqua: args.jusqua || null, preFiltre: false });
   }
   const nbTravailleurs = Math.max(1, Math.min(require('os').cpus().length, travaux.length));
   const resultats = [];

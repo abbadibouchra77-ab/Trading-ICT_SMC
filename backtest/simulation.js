@@ -127,7 +127,7 @@ function suivreTrade(bs, k0, sig, spread, regl) {
 // actif = { symbol, crypto, correle }, brut = bougies (M1 ou M15), brutCorrele = bougies de l'actif corrélé ou null
 function backtesterActif(actif, brut, brutCorrele, options) {
   options = options || {};
-  const regl = Object.assign({ spread: 0, depuis: null, jusqua: null, dureeMaxJours: 20, margeBeR: 0.05, margeStopAtr: 0.1, pasMinR: 0.1, preFiltre: true, reglagesMoteur: {} }, options);
+  const regl = Object.assign({ spread: 0, depuis: null, jusqua: null, dureeMaxJours: 20, margeBeR: 0.05, margeStopAtr: 0.1, pasMinR: 0.1, preFiltre: false, reglagesMoteur: {} }, options);
   const ut = unitesDeTemps(brut);
   const utC = brutCorrele ? unitesDeTemps(brutCorrele) : null;
   const bs = ut.M15;

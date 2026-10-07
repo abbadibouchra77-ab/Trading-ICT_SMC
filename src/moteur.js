@@ -23,17 +23,10 @@
 // ------------------------------- Réglages -------------------------------------------
 const REGLAGES = {
   rrMin: 2,                // TP1 à au moins 2R
-  margeStopAtr: 0.15,      // marge derrière la mèche du balayage M15, en ATR M15
-  fraicheurMSS: 8,         // le MSS M15 doit dater de 8 bougies (2 h) au plus
-  mssPivot: 3,             // le MSS casse un vrai sommet M15 (pivot de 3 bougies de chaque côté), pas une petite bosse
-  stopMinAtrH1: 1.0,       // le stop est au moins à 1 ATR H1 de l'entrée : jamais collé à l'entrée
-  entreeRejet: 0.25,       // entrée sur rejet : ordre limite à 25 % de la mèche de liquidation (0 = désactivée)
-  dureeRejet: 1,           // l'ordre sur rejet expire au bout de 1 h (sinon on attend le MSS)
-  rangeH1: { bougies: 24, largeurAtr: 3, efficacite: 0.3 }, // H1 en range : 24 bougies dans 3 ATR, sans direction
-  reactionMin: 8,          // la réaction M15 est le plus bas (haut) d'au moins 8 bougies
-  fenetreBalayageM15: 48,  // balayage M15 cherché sur les 12 dernières heures
-  fenetreLegH4: 60,        // point B H4 cherché sur les 60 dernières bougies H4 (H1 : 80)
-  dureeOrdre: 3,           // hors killzone, l'ordre limite expire au bout de 3 h (en killzone : à la fin de la killzone)
+  margeStopAtr: 0.15,      // stop au-delà du point A, avec une marge de 0,15 ATR (UT du contexte)
+  porteeTP: 1.5,           // TP1 à portée : pas plus loin que 1,5 fois la jambe depuis l'entrée
+  fenetreLegH4: 60,        // (lecture HTF)
+  dureeOrdre: 4,           // l'ordre limite attend le retour 4 h, puis il est replacé tant que le setup tient
   killzoneObligatoire: false, // bot 24h/24 sur tous les actifs (demande du 07/10/2026) ; la killzone reste une confirmation
   // Killzones (heure de New York) : Londres 02h-05h, New York matin 07h-11h (confirmation, pas obligatoire).
   killzones: [{ nom: 'Londres', debut: 200, fin: 500 }, { nom: 'New York matin', debut: 700, fin: 1100 }],
@@ -170,13 +163,43 @@ function structureSwing(bs) {
     let m = -Infinity, im = -1; for (let q = Lw[k - 1].i; q <= Lw[k].i; q++) if (bs[q].h > m) { m = bs[q].h; im = q; }
     sw.push({ type: 'H', p: m, i: im, conf: Lw[k].i + 1 });
   }
+  // les pivots eux-mêmes sont aussi des sommets / creux de swing
+  piv.forEach(function (p) { sw.push({ type: p.type, p: p.p, i: p.i, conf: p.i + 2 }); });
   sw.sort(function (a, b) { return a.conf - b.conf; });
-  const evts = []; let tendance = 0, sh = null, sl = null, k = 0;
+  // Structure EXTERNE (le corps doit clôturer au-delà) :
+  //  - tendance haussière : BOS = clôture au-dessus du plus haut sommet de swing depuis la dernière cassure ;
+  //    CHoCH = clôture sous le strong low (l'origine du mouvement qui a fait le dernier BOS).
+  //    Un creux interne (plus haut que le strong low) cassé ne compte pas.
+  //  - symétrique en tendance baissière.
+  const evts = []; let tendance = 0, fort = null, iFort = -1, depuis = 0, k = 0;
+  const hs = [], ls = [];
   for (let i = 0; i < bs.length; i++) {
-    while (k < sw.length && sw[k].conf <= i) { if (sw[k].type === 'H') sh = sw[k]; else sl = sw[k]; k++; }
+    while (k < sw.length && sw[k].conf <= i) { (sw[k].type === 'H' ? hs : ls).push(sw[k]); k++; }
     const c = bs[i].c;
-    if (sh && c > sh.p && sh.i < i) { evts.push({ i: i, dir: 1, type: tendance === -1 ? 'CHoCH' : 'BOS', niveau: sh.p, iNiveau: sh.i }); tendance = 1; sh = null; }
-    else if (sl && c < sl.p && sl.i < i) { evts.push({ i: i, dir: -1, type: tendance === 1 ? 'CHoCH' : 'BOS', niveau: sl.p, iNiveau: sl.i }); tendance = -1; sl = null; }
+    // plus haut sommet / plus bas creux de swing confirmés depuis la dernière cassure
+    let sh = null, sl = null;
+    for (let q = hs.length - 1; q >= 0 && hs[q].i >= depuis; q--) if (!sh || hs[q].p > sh.p) sh = hs[q];
+    for (let q = ls.length - 1; q >= 0 && ls[q].i >= depuis; q--) if (!sl || ls[q].p < sl.p) sl = ls[q];
+    if (tendance >= 0 && sh && sh.i < i && c > sh.p) {
+      let m = Infinity, im = sh.i; for (let q = sh.i; q <= i; q++) if (bs[q].l < m) { m = bs[q].l; im = q; }
+      evts.push({ i: i, dir: 1, type: tendance === 1 ? 'BOS' : 'CHoCH', niveau: sh.p, iNiveau: sh.i });
+      tendance = 1; fort = m; iFort = im; depuis = sh.i + 1; continue;
+    }
+    if (tendance <= 0 && sl && sl.i < i && c < sl.p) {
+      let m = -Infinity, im = sl.i; for (let q = sl.i; q <= i; q++) if (bs[q].h > m) { m = bs[q].h; im = q; }
+      evts.push({ i: i, dir: -1, type: tendance === -1 ? 'BOS' : 'CHoCH', niveau: sl.p, iNiveau: sl.i });
+      tendance = -1; fort = m; iFort = im; depuis = sl.i + 1; continue;
+    }
+    if (tendance === 1 && c < fort) { // le strong low est cassé : CHoCH baissier
+      let m = -Infinity, im = iFort; for (let q = iFort; q <= i; q++) if (bs[q].h > m) { m = bs[q].h; im = q; }
+      evts.push({ i: i, dir: -1, type: 'CHoCH', niveau: fort, iNiveau: iFort });
+      tendance = -1; fort = m; iFort = im; depuis = iFort; continue;
+    }
+    if (tendance === -1 && c > fort) {
+      let m = Infinity, im = iFort; for (let q = iFort; q <= i; q++) if (bs[q].l < m) { m = bs[q].l; im = q; }
+      evts.push({ i: i, dir: 1, type: 'CHoCH', niveau: fort, iNiveau: iFort });
+      tendance = 1; fort = m; iFort = im; depuis = iFort; continue;
+    }
   }
   return { evts: evts, tendance: tendance };
 }
@@ -633,7 +656,7 @@ function analyserCote(d, dc, S, ctx, R) {
       .filter(function (s) { return s.i >= iA - 1 && s.i <= iA + 1; }))[0] || null;
     const conf = ['structure ' + c.ut + ' cassée (' + evts[evts.length - 1].type + ')'];
     if (iA >= 12) { let hi = -Infinity, lo = Infinity; for (let q = iA - 12; q < iA; q++) { hi = Math.max(hi, bs[q].h); lo = Math.min(lo, bs[q].l); } if (hi - lo <= 4 * atr && balA) conf.push('AMD ' + c.ut + ' au point A'); }
-    return { type: 'tendance', ut: c.ut, A: A, B: B, tB: bs[iB].t, zoneBas: A - 1.0 * atr, zoneHaut: A + 0.5 * (B - A), invalidation: A,
+    return { type: 'tendance', ut: c.ut, atr: atr, A: A, B: B, tA: bs[iA].t, tB: bs[iB].t, zoneBas: A - 1.0 * atr, zoneHaut: A + 0.5 * (B - A), invalidation: A,
       liquidite: balA ? balA.niveaux.map(function (x) { return x.genre; }) : [], conf: conf, cle: c.ut + '|tendance|' + bs[iA].t,
       recit: 'tendance ' + c.ut + ' : jambe ' + mot.haussiere + ' de ' + P(A) + ' à ' + P(B) + ' (' + uniques(evts.map(function (e) { return e.type; })).join(', ') + ')' +
         (balA ? ', le point A a balayé ' + balA.niveaux.slice(0, 3).map(function (x) { return x.genre; }).join(' + ') : '') };
@@ -646,19 +669,22 @@ function analyserCote(d, dc, S, ctx, R) {
     for (let j = n - 1; j >= Math.max(30, n - c.recul); j--) {
       const rg = rangeAvant(bs, j, atr); if (!rg) continue;
       const b = bs[j];
+      // manipulation : une VRAIE mèche de liquidation sous le bas du range (mèche ≥ la moitié de la bougie),
+      // et la bougie clôture franchement dans le range
       if (!(b.l < rg.bas - 0.05 * atr)) continue;
-      const iRet = b.c > rg.bas ? j : (j + 1 < n && bs[j + 1].c > rg.bas ? j + 1 : -1);
-      if (iRet < 0) continue;
-      const meche = Math.min(b.l, bs[iRet].l);
+      if (!(Math.min(b.o, b.c) - b.l >= 0.5 * (b.h - b.l) && b.c > rg.bas + 0.1 * atr)) continue;
+      const iRet = j;
+      const meche = b.l;
+      // distribution : grande bougie dans l'autre sens, qui laisse un FVG
       const cm = moyenne(bs.slice(Math.max(0, j - 20), j).map(corps));
-      let iDep = -1; for (let q = j; q <= Math.min(n - 1, j + 4); q++) if (bs[q].c > bs[q].o && corps(bs[q]) >= 1.5 * cm && bs[q].c > (rg.haut + rg.bas) / 2) { iDep = q; break; }
+      let iDep = -1; for (let q = j + 1; q <= Math.min(n - 1, j + 4); q++) if (bs[q].c > bs[q].o && corps(bs[q]) >= 1.5 * cm && q + 1 < n && bs[q + 1].l > bs[q - 1].h) { iDep = q; break; }
       if (iDep < 0) continue;
       let mort = false; for (let q = iRet; q < n; q++) if (bs[q].c < meche) { mort = true; break; }
       if (mort) continue;
       const zi = zonesSous(meche, 0.2 * atr, bs[rg.debut].t, c.zonesUT);
       if (!zi.length) continue; // la manipulation doit se faire dans une zone d'intérêt (formée avant le range)
       let B = -Infinity, iB = j; for (let q = j; q < n; q++) if (bs[q].h >= B) { B = bs[q].h; iB = q; }
-      return { type: 'AMD', ut: c.ut, A: meche, B: B, tB: bs[iB].t, zoneBas: meche - 0.3 * atr, zoneHaut: Math.max(rg.haut, meche + 0.5 * (B - meche)), invalidation: meche,
+      return { type: 'AMD', ut: c.ut, atr: atr, A: meche, B: B, tA: bs[j].t, tB: bs[iB].t, zoneBas: meche - 0.3 * atr, zoneHaut: Math.max(rg.haut, meche + 0.5 * (B - meche)), invalidation: meche,
         liquidite: ['bas de range ' + c.ut], conf: ['AMD ' + c.ut + ' dans ' + nomsZ(zi)], cle: c.ut + '|AMD|' + bs[j].t,
         recit: 'AMD ' + c.ut + ' : range ' + P(rg.bas) + ' - ' + P(rg.haut) + ', mèche qui liquide le bas du range à ' + P(meche) + ' dans ' + nomsZ(zi) + ', puis déplacement ' + mot.haussier };
     }
@@ -684,7 +710,7 @@ function analyserCote(d, dc, S, ctx, R) {
       let mort = false; for (let q = j + 1; q < n; q++) if (bs[q].c < niv - 0.5 * atr) { mort = true; break; } // retour dans le range : fausse cassure
       if (mort) continue;
       let B = -Infinity, iB = j; for (let q = j; q < n; q++) if (bs[q].h >= B) { B = bs[q].h; iB = q; }
-      return { type: 'cassure', ut: c.ut, A: bas, B: B, tB: bs[iB].t, zoneBas: niv - 0.5 * atr, zoneHaut: niv + 0.5 * (B - niv), invalidation: bas, diagonal: /diagonal/.test(genre),
+      return { type: 'cassure', ut: c.ut, atr: atr, A: bas, B: B, tA: bs[j].t, tB: bs[iB].t, zoneBas: niv - 0.5 * atr, zoneHaut: niv + 0.5 * (B - niv), invalidation: bas, diagonal: /diagonal/.test(genre),
         liquidite: ['liquidité au-dessus du ' + genre + ' ' + c.ut], conf: ['cassure ' + genre + ' ' + c.ut + ' par déplacement'], cle: c.ut + '|cassure|' + bs[j].t,
         recit: 'cassure ' + c.ut + ' du ' + genre + ' à ' + P(niv) + ' par une bougie de déplacement qui clôture dehors' };
     }
@@ -701,163 +727,92 @@ function analyserCote(d, dc, S, ctx, R) {
   if (e4 && e4.dir === -1) { raisons.push('Dernière cassure de structure H4 : ' + cassureTxt(e4, 'H4') + ' : pas de ' + mot.achat + '.'); return res; }
   if (e1 && e1.dir === -1) { raisons.push('Dernière cassure de structure H1 : ' + cassureTxt(e1, 'H1') + ' : on attend une cassure ' + mot.haussiere + ' H1.'); return res; }
   const contextes = [], echecs = [];
+  // Contextes : tendance, AMD et cassure en H4 ; en H1, seulement l'AMD (les autres lectures H1 sont trop faibles)
   for (const c of UTS) {
+    const a = contexteAMD(c); if (a) contextes.push(a);
+    if (c.ut !== 'H4') continue;
     const t = contexteTendance(c);
     if (t.echec) echecs.push('tendance ' + c.ut + ' : ' + t.echec); else contextes.push(t);
-    const a = contexteAMD(c); if (a) contextes.push(a);
     const k = contexteCassure(c); if (k) contextes.push(k);
   }
   if (!contextes.length) { raisons.push('Aucun contexte H4 / H1 lisible (' + echecs.join(' ; ') + ').'); return res; }
 
-  // ---------------- 3. RÉACTION M15 + ENTRÉE, pour chaque contexte ----------------
-  // H1 en range juste avant l'instant t : bougies serrées et sans direction (efficacité faible)
-  function rangeH1(t) {
-    const g = R.rangeH1;
-    let fin = -1; for (let i = n1 - 1; i >= 0; i--) if (H1[i].t + DUREE.H1 <= t) { fin = i; break; }
-    if (fin < g.bougies) return null;
-    let hi = -Infinity, lo = Infinity, chemin = 0;
-    for (let i = fin - g.bougies + 1; i <= fin; i++) { hi = Math.max(hi, H1[i].h); lo = Math.min(lo, H1[i].l); if (i > fin - g.bougies + 1) chemin += Math.abs(H1[i].c - H1[i - 1].c); }
-    const eff = chemin > 0 ? Math.abs(H1[fin].c - H1[fin - g.bougies + 1].c) / chemin : 0;
-    return (hi - lo <= g.largeurAtr * atr1 && eff < g.efficacite) ? { haut: hi, bas: lo } : null;
-  }
+  // ---------------- 3. ENTRÉE, pour chaque contexte ----------------
   function enKZ(t) { const h = ny(t).hm; return R.killzones.filter(function (k) { return h >= k.debut && h < k.fin; })[0] || null; }
   const rsi15 = rsiSerie(M15, 14), rsi1 = rsiSerie(H1, 14);
+  // Range actif juste avant maintenant, sur une série : W dernières bougies dans moins de 3,5 ATR,
+  // au moins 2 touches de chaque bord, sans direction (efficacité faible).
+  function rangeActif(bs, atr) {
+    const n = bs.length;
+    for (const W of [16, 24, 32, 48]) {
+      if (n < W + 1) break;
+      let hi = -Infinity, lo = Infinity, chemin = 0;
+      for (let i = n - W; i < n; i++) { hi = Math.max(hi, bs[i].h); lo = Math.min(lo, bs[i].l); if (i > n - W) chemin += Math.abs(bs[i].c - bs[i - 1].c); }
+      if (hi - lo > 3.5 * atr) continue;
+      let th = 0, tl = 0; for (let i = n - W; i < n; i++) { if (bs[i].h >= hi - 0.2 * atr) th++; if (bs[i].l <= lo + 0.2 * atr) tl++; }
+      const eff = chemin > 0 ? Math.abs(bs[n - 1].c - bs[n - W].c) / chemin : 0;
+      if (th >= 2 && tl >= 2 && eff < 0.3) return { haut: hi, bas: lo, bougies: W };
+    }
+    return null;
+  }
   function essayer(k) {
     const points = []; let note = 0;
     function pts(nb, quoi) { if (nb > 0) { note += nb; points.push('+' + nb + ' ' + quoi); } }
     const r = { ok: false, points: points, note: 0 };
     function stop(msg) { r.raison = k.recit + ' -> ' + msg; r.note = note; return r; }
-    // clé d'un trade = contexte # réaction M15 : on ne retrade ni le même contexte, ni la même réaction M15
-    const deja = ctx.legsDejaTradees.map(function (x) { return String(x).split('#'); });
-    if (deja.some(function (x) { return x[0] === k.cle + '|' + res.sens; })) return stop('ce mouvement a déjà été tradé.');
-    // le creux de réaction M15 : le plus bas du retracement depuis le point B (au moins 8 bougies, au plus 40),
-    // dans la zone du contexte, jamais repris ensuite
-    let iA = -1;
-    // la bougie M15 du point B (dans la bougie du contexte qui l'a fait)
-    let iB15 = n15; for (let q = n15 - 1; q >= 0 && M15[q].t >= k.tB; q--) if (M15[q].h >= k.B - 1e-9) iB15 = q;
-    for (let i = n15 - 1; i >= Math.max(R.reactionMin + 1, n15 - R.fenetreBalayageM15); i--) {
-      const lo = M15[i].l;
-      if (lo < k.zoneBas || lo > k.zoneHaut || !estExtreme(M15, i, lo, Math.max(R.reactionMin, Math.min(40, i - iB15)), 0.1 * atr15)) continue;
-      let repris = false; for (let q = i + 1; q < n15; q++) if (M15[q].l < lo) { repris = true; break; }
-      if (!repris) iA = i;
-      break;
-    }
-    if (iA < 0) return stop('pas encore de réaction M15 dans la zone (' + P(k.zoneBas) + ' - ' + P(k.zoneHaut) + ').');
-    const A15 = M15[iA].l;
-    if (deja.some(function (x) { return x[1] === 'M15|' + M15[iA].t + '|' + res.sens; })) return stop('cette réaction M15 a déjà été tradée.');
-    const bal = grouperBalayages(balayagesBas(M15, niveaux, atr15, Math.max(1, iA - 3)))
-      .filter(function (g) { return g.i >= iA - 3 && g.i <= iA && g.meche <= A15 + 1e-9; }).slice(-1)[0] || null;
-    if (!bal && !k.liquidite.length) return stop('aucune prise de liquidité dans l\'histoire : la Smart Money ne s\'est pas montrée.');
-    const i0 = bal ? bal.i : iA;
-    // Deux façons d'entrer :
-    //  - après le MSS : clôture au-delà d'un vrai sommet M15 avec déplacement, ordre limite au FVG / OB du déplacement ;
-    //  - sur le rejet : dans une zone d'intérêt, la bougie qui fait l'extrême prend de la liquidité et rejette
-    //    (mèche de liquidation, clôture dans la bonne moitié) : ordre limite dans la mèche, sans attendre le MSS.
-    function entreeMSS() {
-      const sommetsAvant = pivots(M15, R.mssPivot).filter(function (p) { return p.type === 'H' && p.i + R.mssPivot <= i0; });
-      if (!sommetsAvant.length) return { erreur: 'pas de sommet M15 de référence pour le MSS.' };
-      const ref = sommetsAvant[sommetsAvant.length - 1];
-      let iMSS = -1; for (let j = iA; j < n15; j++) if (M15[j].c > ref.p) { iMSS = j; break; }
-      if (iMSS < 0) return { erreur: 'réaction M15 à ' + P(A15) + ', on attend le MSS (clôture au-delà de ' + P(ref.p) + ').' };
-      if (iMSS < n15 - R.fraicheurMSS) return { erreur: 'le MSS M15 date de plus de ' + (R.fraicheurMSS / 4) + ' h : signal périmé.' };
-      const corpsMoy15 = moyenne(M15.slice(Math.max(0, i0 - 20), i0).map(corps));
-      let iDep = -1; for (let q = i0; q <= iMSS; q++) if (M15[q].c > M15[q].o && corps(M15[q]) >= 1.5 * corpsMoy15) iDep = q;
-      if (iDep < 0) return { erreur: 'MSS M15 sans vrai déplacement (pas de grande bougie).' };
-      // Pas de trade dans un range : si le H1 était en range avant la réaction, le MSS doit faire sortir le prix du range.
-      const boite = rangeH1(M15[i0].t);
-      if (boite && M15[iMSS].c <= boite.haut) return { erreur: 'le marché est en range H1 (' + P(boite.bas) + ' - ' + P(boite.haut) + ') et le MSS n\'en est pas sorti : entrée prématurée, on attend.' };
-      const dansJambe = function (z) { return z.role === 'achat' && z.i >= i0 && z.i <= Math.min(n15 - 1, iMSS + 2); };
-      const fvgs = zM15.filter(function (z) { return z.type === 'FVG' && dansJambe(z); }).concat(zM15.filter(function (z) { return z.type === 'BPR' && dansJambe(z); }))
-        .sort(function (a, b) { return (a.type === 'FVG' ? 0 : 1) - (b.type === 'FVG' ? 0 : 1) || Math.abs(a.i - iMSS) - Math.abs(b.i - iMSS); });
-      const obs = zM15.filter(function (z) { return z.type === 'OB' && z.role === 'achat' && z.iOrigine >= i0 - 1 && z.i <= iMSS + 1; });
-      let zoneEntree, typeEntree;
-      if (fvgs.length) { zoneEntree = fvgs[0]; typeEntree = zoneEntree.type + ' M15 (50 %)'; }
-      else if (obs.length) { zoneEntree = obs[obs.length - 1]; typeEntree = 'OB M15 (50 %)'; }
-      else return { erreur: 'MSS sans FVG ni OB M15 pour placer l\'ordre limite.' };
-      const entree = (zoneEntree.bas + zoneEntree.haut) / 2;
-      for (let j = zoneEntree.i + 1; j < n15; j++) if (M15[j].l <= entree) return { erreur: 'le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : ordre manqué, on ne court pas après.' };
-      return { mode: 'MSS', entree: entree, typeEntree: typeEntree, iDep: iDep, iSignal: iMSS, ref: ref };
-    }
-    function entreeRejet() {
-      if (!R.entreeRejet || iA < n15 - 2) return null;
-      // liquidité prise par la mèche du rejet ou par l'une des 3 bougies d'avant (la mèche de liquidation)
-      const prise = bal || grouperBalayages(balayagesBas(M15, niveaux, atr15, Math.max(1, iA - 3))).some(function (g) { return g.i >= iA - 3 && g.i <= iA; });
-      if (!prise) return null;
-      const b = M15[iA], meche = Math.min(b.o, b.c) - b.l;
-      if (!(meche >= 0.5 * (b.h - b.l) && b.c >= (b.h + b.l) / 2)) return null;
-      if (!zonesSous(A15, 0.2 * atr4, ctx.maintenant, ['H1', 'H4', 'D1', 'W1']).length) return null;
-      const entree = Math.min(b.o, b.c) - R.entreeRejet * meche;
-      for (let j = iA + 1; j < n15; j++) if (M15[j].l <= entree) return null;
-      return { mode: 'rejet', entree: entree, typeEntree: 'rejet M15 (mèche de liquidation)', iDep: iA, iSignal: iA, ref: null };
-    }
-    let m = entreeMSS();
-    if (m.erreur) { const rj = entreeRejet(); if (!rj) return stop(m.erreur); m = rj; }
-    const kz = enKZ(M15[m.iSignal].t);
-    if (R.killzoneObligatoire && !ctx.crypto && (!kz || !enKZ(ctx.maintenant))) return stop('hors killzone (Londres 02h-05h, New York 07h-11h, heure de NY) : pas d\'ordre.');
-    const entree = m.entree, typeEntree = m.typeEntree, iDep = m.iDep, ref = m.ref;
-    let B15 = -Infinity; for (let j = m.iSignal; j < n15; j++) B15 = Math.max(B15, M15[j].h);
-    // stop derrière la réaction M15, et au moins à 1 ATR H1 de l'entrée (le bruit ne doit pas le toucher)
-    const stopPx = Math.min(A15 - R.margeStopAtr * atr15, entree - R.stopMinAtrH1 * atr1);
+    const deja = ctx.legsDejaTradees.map(function (x) { return String(x).split('#')[0]; });
+    if (deja.indexOf(k.cle + '|' + res.sens) >= 0) return stop('ce mouvement a déjà été tradé.');
+    if (!k.liquidite.length) return stop('aucune prise de liquidité dans l\'histoire : la Smart Money ne s\'est pas montrée.');
+    // 1. Zone d'entrée : le FVG laissé par la jambe de déplacement (UT du contexte, sinon H1, sinon M15),
+    //    dans la décote de la jambe (sous 50 %) ; on prend le premier que le prix rencontrera en revenant.
+    //    Sans FVG : l'OTE (70,5 %) de la jambe. On vend dans la prime, on achète dans la décote.
+    const moitie = k.A + 0.5 * (k.B - k.A);
+    const zJambe = zonesT.concat(zM15.map(function (z) { return Object.assign({ t: M15[z.i].t }, z); }))
+      .filter(function (z) { return z.type === 'FVG' && z.role === 'achat' && z.t >= k.tA && z.t <= k.tB + DUREE[k.ut] && (z.bas + z.haut) / 2 <= moitie && z.bas > k.A; })
+      .sort(function (a, b) { return b.haut - a.haut; });
+    let entree, typeEntree, zoneE = null;
+    if (zJambe.length) { zoneE = zJambe[0]; entree = (zoneE.bas + zoneE.haut) / 2; typeEntree = 'FVG ' + zoneE.ut + ' de la jambe (50 %)'; }
+    else { entree = k.A + (1 - 0.705) * (k.B - k.A); typeEntree = 'OTE de la jambe (70,5 %)'; }
+    // 2. Pas encore touchée depuis le point B (sinon l'ordre aurait déjà été rempli ou manqué)
+    for (let j = n15 - 1; j >= 0 && M15[j].t >= k.tB; j--) if (M15[j].l <= entree) return stop('le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : on ne court pas après.');
+    if (prix <= entree) return stop('le prix est déjà sous l\'entrée.');
+    // 3. Stop au-delà du point A (l'origine du mouvement), jamais collé à l'entrée
+    const stopPx = k.A - R.margeStopAtr * k.atr;
     const risque = entree - stopPx;
-    if (!(risque > 0.2 * atr15)) return stop('stop trop serré par rapport à l\'entrée.');
-    if (risque > 3 * atr4) return stop('stop trop large (plus de 3 ATR H4).');
-    const tps = cibles.map(function (nv) { return { p: prixNiveau(nv, ctx.maintenant), nom: nv.genre, poids: importance(nv) }; })
-      .concat(k.B > entree ? [{ p: k.B, nom: 'point B ' + k.ut, poids: 3 }] : [])
-      .filter(function (x) { return (x.p - entree) / risque >= R.rrMin; })
-      .sort(function (a, b) { return a.p - b.p; });
-    if (!tps.length) return stop('pas de liquidité en face à au moins ' + R.rrMin + 'R.');
+    if (!(risque > 0.3 * atr15)) return stop('stop trop serré par rapport à l\'entrée.');
+    // 4. TP1 : la première vraie liquidité en face, à portée (pas plus loin que 1,5 fois la jambe depuis l'entrée), à 2R au moins
+    const portee = entree + R.porteeTP * (k.B - k.A);
+    const toutes = cibles.map(function (nv) { return { p: prixNiveau(nv, ctx.maintenant), nom: nv.genre, poids: importance(nv) }; })
+      .concat([{ p: k.B, nom: 'point B ' + k.ut, poids: 3 }])
+      .filter(function (x) { return x.p > entree; }).sort(function (a, b) { return a.p - b.p; });
+    const tps = toutes.filter(function (x) { return (x.p - entree) / risque >= R.rrMin && x.p <= portee; });
+    if (!tps.length) return stop('pas de liquidité à portée à ' + R.rrMin + 'R au moins (stop au-delà du point A).');
     const tp1 = tps[0];
-    const pDol = dol ? prixNiveau(dol, ctx.maintenant) : null;
-    const tp2 = (pDol !== null && pDol > tp1.p + 0.5 * risque ? { p: pDol, nom: dol.genre + ' (point B HTF)' } : null) ||
-      tps.filter(function (x) { return x.p > tp1.p + 0.5 * risque && x.poids >= 2; }).slice(k.diagonal ? -1 : 0)[0] || null;
+    const tp2 = toutes.filter(function (x) { return x.p > tp1.p + 0.5 * risque && x.poids >= 2 && x.p <= entree + 2 * R.porteeTP * (k.B - k.A); })[0] || null;
+    // 5. Pas d'entrée dans un range (M15 ou H1) : on attend que le prix en sorte
+    const rg15 = rangeActif(M15, atr15), rg1 = rangeActif(H1, atr1);
+    for (const rg of [rg15, rg1]) if (rg && entree > rg.bas && entree < rg.haut) return stop('le marché est en range (' + P(rg.bas) + ' - ' + P(rg.haut) + ') et l\'entrée serait dedans : on attend.');
+    const kz = enKZ(ctx.maintenant);
+    if (R.killzoneObligatoire && !ctx.crypto && !kz) return stop('hors killzone : pas d\'ordre.');
 
     // ----- Confirmations (notées, jamais bloquantes) -----
     k.conf.forEach(function (x) { pts(1, x); });
-    if (k.liquidite.length) pts(2, 'liquidité prise sur le contexte ' + k.ut + ' : ' + k.liquidite.slice(0, 3).join(' + '));
-    const rHTF = retracement(k.A, k.B, A15);
-    const oteHTF = k.type !== 'cassure' && rHTF >= 0.62 && rHTF <= 0.79;
-    if (oteHTF) pts(2, 'réaction dans l\'OTE ' + k.ut + ' (' + rHTF.toFixed(2) + ')');
-    const zR = zonesSous(A15, 0.2 * atr4, ctx.maintenant, ['H1', 'H4', 'D1', 'W1']);
-    if (zR.length) pts(2, 'réaction dans une zone d\'intérêt : ' + nomsZ(zR));
+    pts(2, 'liquidité prise sur le contexte ' + k.ut + ' : ' + k.liquidite.slice(0, 3).join(' + '));
+    const rE = retracement(k.A, k.B, entree);
+    const ote = rE >= 0.62 && rE <= 0.79;
+    if (ote) pts(2, 'entrée dans l\'OTE ' + k.ut + ' (' + rE.toFixed(2) + ')');
+    const zR = zonesSous(entree, 0.2 * atr4, ctx.maintenant, ['H1', 'H4', 'D1', 'W1']);
+    if (zR.length) pts(2, 'entrée dans une zone d\'intérêt : ' + nomsZ(zR));
     if (obEtFvgSuperposes(zR)) pts(1, 'OB + FVG superposés (' + obEtFvgSuperposes(zR) + ')');
-    const b0 = M15[i0];
-    if (bal) {
-      pts(2, (bal.grab ? 'liquidity grab M15 (fausse cassure reprise) : ' : 'balayage M15 : ') + bal.niveaux.slice(0, 3).map(function (x) { return x.genre; }).join(' + '));
-      if (bal.niveaux.length >= 2 || bal.niveaux.some(function (x) { return importance(x) >= 2; })) pts(1, 'liquidité cumulée / importante balayée');
-      if (bal.niveaux.some(function (x) { return /session Asie/.test(x.genre); })) pts(1, 'Judas swing : liquidité de l\'Asie balayée');
-      const idm = inducement(M15, bal.i, bal.meche, atr15);
-      if (idm) pts(1, 'inducement pris avant le vrai balayage (' + P(idm.p) + ')');
-    }
-    if (Math.min(b0.o, b0.c) - b0.l >= 0.4 * (b0.h - b0.l)) pts(1, 'mèche de liquidation');
-    if (ses.ouvertureMinuit !== null && ny(b0.t).jour === ses.jourMinuit && A15 < ses.ouvertureMinuit) pts(1, 'Power of 3 : manipulation ' + (S > 0 ? 'sous' : 'au-dessus de') + ' l\'ouverture de minuit');
-    if (kz) pts(1, (ref ? 'MSS' : 'rejet') + ' en killzone ' + kz.nom);
-    // confirmation H1 au même endroit : rejet, CHoCH ou FVG
-    const tA = M15[iA].t;
-    const i1 = H1.findIndex(function (b) { return b.t <= tA && tA < b.t + DUREE.H1; });
-    if (i1 >= 0) {
-      const b1 = H1[i1], confH1 = [];
-      if (Math.min(b1.o, b1.c) - b1.l >= 0.4 * (b1.h - b1.l) && b1.c >= (b1.h + b1.l) / 2) confH1.push('rejet H1');
-      const r1 = pivots(H1, 2).filter(function (p) { return p.type === 'H' && p.i + 2 <= i1; }).slice(-1)[0];
-      if (r1) for (let j = i1; j < n1; j++) if (H1[j].c > r1.p) { confH1.push('CHoCH H1'); break; }
-      if (zH1.some(function (z) { return z.type === 'FVG' && z.role === 'achat' && z.i >= i1; })) confH1.push('FVG H1 ' + mot.haussier);
-      if (confH1.length) pts(1, 'confirmation H1 : ' + confH1.join(', '));
-      if (divergence(H1, rsi1, 2, 60, i1 + 2) >= 1) pts(1, 'divergence RSI H1');
-    }
-    const vMoy = volumeMoyen(M15, i0, 20);
-    if (vMoy > 0 && (M15[iDep].v >= 1.3 * vMoy || b0.v >= 1.3 * vMoy)) pts(2, 'volume fort sur le balayage / déplacement');
-    if (dc && smt(M15, dc.M15, i0, 40)) pts(2, 'SMT : ' + ctx.correle + ' n\'a pas fait de ' + mot.bas);
-    if (divergence(M15, rsi15, 2, 60, i0 + 2) >= 1) pts(1, 'divergence RSI M15');
-    if (rsiSortieZoneNeutre(rsi15, n15, 12)) pts(1, 'RSI sort de sa zone neutre');
-    const r15 = retracement(A15, B15, entree);
-    if (r15 >= 0.5) pts(1, 'entrée dans l\'OTE M15 (' + r15.toFixed(2) + ')');
+    if (kz) pts(1, 'ordre placé en killzone ' + kz.nom);
+    if (dc && smt(M15, dc.M15, n15 - 1, 40)) pts(2, 'SMT : ' + ctx.correle + ' n\'a pas fait de ' + mot.bas);
     if ((tp1.p - entree) / risque >= 3) pts(1, 'TP1 à 3R ou plus');
     if (biais === 'aligné') pts(1, 'dans le sens du Monthly / Weekly / Daily');
-
-    // A+++ : tendance + retour dans l'OTE dans une zone d'intérêt + mèche de liquidation, et la même chose au M15
-    const grade = (k.type === 'tendance' && oteHTF && zR.length && bal && r15 >= 0.5) ? 'A+++' : 'A++';
+    // A+++ : tendance H4 + liquidité prise au point A + entrée dans l'OTE + dans une zone d'intérêt
+    const grade = (k.type === 'tendance' && k.ut === 'H4' && ote && (zoneE || zR.length)) ? 'A+++' : 'A++';
     r.ok = true; r.note = note; r.grade = grade; r.contexte = k;
     r.entree = entree; r.stopPx = stopPx; r.risque = risque; r.typeEntree = typeEntree; r.tp1 = tp1; r.tp2 = tp2; r.kz = kz;
-    r.mode = m.mode; r.bal = bal; r.A15 = A15; r.iA = iA; r.zR = zR; r.rHTF = rHTF; r.ref = ref;
+    r.mode = 'FVG'; r.zR = zR; r.rE = rE;
     return r;
   }
 
@@ -871,27 +826,20 @@ function analyserCote(d, dc, S, ctx, R) {
   }
   const t = bons[0], k = t.contexte;
   histoire.push('Contexte : ' + k.recit + '.');
-  histoire.push('M15 : ' + (t.bal ? 'balayage de ' + t.bal.niveaux.slice(0, 3).map(function (x) { return x.genre; }).join(' + ') + ' (mèche ' + P(t.bal.meche) + ')' : 'réaction à ' + P(t.A15)) +
-    (t.ref ? ', MSS ' + (t.kz ? 'en killzone ' + t.kz.nom + ' ' : '') + 'avec déplacement au-delà de ' + P(t.ref.p) + '.'
-           : ', rejet immédiat (mèche de liquidation dans la zone d\'intérêt) : entrée sans attendre le MSS.'));
   res.ok = true; res.note = t.note; res.modeEntree = t.mode; res.points = t.points; res.grade = t.grade;
   res.entree = P(t.entree); res.stop = P(t.stopPx); res.typeEntree = t.typeEntree;
   res.tp1 = P(t.tp1.p); res.tp1Nom = t.tp1.nom; res.rr1 = +((t.tp1.p - t.entree) / t.risque).toFixed(2);
   res.tp2 = t.tp2 ? P(t.tp2.p) : null; res.tp2Nom = t.tp2 ? t.tp2.nom : null; res.rr2 = t.tp2 ? +((t.tp2.p - t.entree) / t.risque).toFixed(2) : null;
-  res.scenario = k.type + ' ' + k.ut; res.pointA = P(k.A); res.pointB = P(k.B); res.cleMouvement = k.cle + '|' + res.sens + '#M15|' + M15[t.iA].t + '|' + res.sens;
+  res.scenario = k.type + ' ' + k.ut; res.pointA = P(k.A); res.pointB = P(k.B); res.cleMouvement = k.cle + '|' + res.sens;
   res.killzone = t.kz ? t.kz.nom : 'hors killzone';
-  // L'ordre limite expire à la fin de la killzone en cours (cryptos : au bout de quelques heures)
-  let expire = ctx.maintenant + R.dureeOrdre * 3600000;
-  if (!ctx.crypto && t.kz && enKZ(ctx.maintenant)) { expire = ctx.maintenant; while (ny(expire).hm < t.kz.fin && expire < ctx.maintenant + 6 * 3600000) expire += 5 * 60000; }
-  if (t.mode === 'rejet') expire = ctx.maintenant + R.dureeRejet * 3600000;
-  res.expireA = new Date(expire).toISOString();
+  // L'ordre limite attend le retour du prix : il expire au bout de quelques heures (il est replacé tant que le setup tient)
+  res.expireA = new Date(ctx.maintenant + R.dureeOrdre * 3600000).toISOString();
   res.biais = biais;
-  res.liquidite = (t.bal ? t.bal.niveaux.map(function (x) { return x.genre; }).join(' + ') + ' balayé à ' + P(t.bal.meche) : 'réaction M15 à ' + P(t.A15)) +
-    (k.liquidite.length ? ' ; contexte ' + k.ut + ' : ' + k.liquidite.join(' + ') : '');
-  res.zone = (t.zR.length ? nomsZ(t.zR) + ' ; ' : '') + (k.type !== 'cassure' ? 'retour ' + k.ut + ' ' + t.rHTF.toFixed(2) + ' ; ' : '') + 'entrée ' + t.typeEntree;
+  res.liquidite = 'contexte ' + k.ut + ' : ' + k.liquidite.join(' + ');
+  res.zone = (t.zR.length ? nomsZ(t.zR) + ' ; ' : '') + 'retour ' + t.rE.toFixed(2) + ' de la jambe ; entrée ' + t.typeEntree;
   res.confirmations = t.points.slice();
   histoire.push('Setup ' + t.grade + ' (' + res.scenario + ', ' + t.points.length + ' confirmations). Ordre limite ' + mot.achat + ' à ' + res.entree + ' (' + t.typeEntree + '), stop ' + res.stop +
-    ' derrière la réaction M15, TP1 ' + t.tp1.nom + ' ' + res.tp1 + ' (' + res.rr1 + 'R)' + (t.tp2 ? ', TP2 ' + t.tp2.nom + ' ' + res.tp2 + ' (' + res.rr2 + 'R)' : '') + '.');
+    ' au-delà du point A, TP1 ' + t.tp1.nom + ' ' + res.tp1 + ' (' + res.rr1 + 'R)' + (t.tp2 ? ', TP2 ' + t.tp2.nom + ' ' + res.tp2 + ' (' + res.rr2 + 'R)' : '') + '.');
   return res;
 }
 
@@ -939,5 +887,5 @@ function analyserActif(symbole, brut, correle, maintenant, etat, options) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { analyserActif, preparerBougies, structure, zones, pivots, rsiSerie, atrSerie, lireUT, balayagesBas, niveauxPivots, miroir, smt, sessions, ny, inducement, obEtFvgSuperposes, REGLAGES };
+  module.exports = { analyserActif, structureSwing, preparerBougies, structure, zones, pivots, rsiSerie, atrSerie, lireUT, balayagesBas, niveauxPivots, miroir, smt, sessions, ny, inducement, obEtFvgSuperposes, REGLAGES };
 }
