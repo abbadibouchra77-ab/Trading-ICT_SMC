@@ -6,6 +6,9 @@
 //   node backtest/cerveau.js --donnees <dossier> --trades <dossier d'un backtest> --nombre 100 [--graine 1] [--sortie dossier] [--sec]
 //     (--trades : tire au hasard des trades remplis d'un backtest, moitié gagnants, moitié perdants)
 //   --sec : n'appelle pas Claude ; écrit seulement les images et la demande (pour vérifier sans dépenser).
+//   --preparer : écrit les demandes complètes dans <sortie>/demandes/ (+ index.json) pour qu'un workflow n8n les envoie
+//                à Claude avec la clé enregistrée dans n8n ; --reponses <dossier> : relit ensuite les réponses
+//                (<dossier>/<cas>.json = message renvoyé par l'API) au lieu d'appeler Claude.
 // Il faut la variable ANTHROPIC_API_KEY (sauf avec --sec). Coût indicatif : quelques centimes par cas.
 const fs = require('fs');
 const path = require('path');
@@ -66,7 +69,9 @@ async function main() {
   }
   if (!cas.length) { console.error('Aucun cas : donner --cas ou --trades.'); process.exit(1); }
   let client = null;
-  if (!args.sec) {
+  const index = [];
+  if (args.preparer) fs.mkdirSync(path.join(sortie, 'demandes'), { recursive: true });
+  if (!args.sec && !args.preparer && !args.reponses) {
     const mod = require('@anthropic-ai/sdk'); const Anthropic = mod.default || mod;
     client = new Anthropic();
   }
@@ -84,7 +89,19 @@ async function main() {
     ['H4', 'H1', 'M15'].forEach(function (u) { fs.writeFileSync(path.join(sortie, nom + '_' + u + '.png'), ims[u].png); });
     const dem = cerveau.demande({ symbole: c.symbole, maintenant: maintenant, prix: prix, lecture: r, images: ims });
     let decision;
-    if (args.sec) {
+    if (args.preparer) {
+      fs.writeFileSync(path.join(sortie, 'demandes', nom + '.json'), JSON.stringify(dem));
+      index.push(nom); fs.writeFileSync(path.join(sortie, 'demandes', 'index.json'), JSON.stringify(index));
+      console.log(nom + ' : demande préparée (' + r.sens + ', ' + r.scenario + ')');
+      continue;
+    }
+    if (args.reponses) {
+      const fr = path.join(args.reponses, nom + '.json');
+      if (!fs.existsSync(fr)) { console.log(nom + ' : pas de réponse'); continue; }
+      const message = JSON.parse(fs.readFileSync(fr, 'utf8'));
+      decision = message.error ? { decision: 'refuser', qualite: 'refus', raison: 'Erreur API : ' + JSON.stringify(message.error).slice(0, 200), controle: [] } : cerveau.lireReponse(message);
+      decision.usage = message.usage;
+    } else if (args.sec) {
       const copie = JSON.parse(JSON.stringify(dem.corps)); copie.messages[0].content.forEach(function (b) { if (b.type === 'image') b.source.data = '(' + b.source.data.length + ' caractères)'; });
       fs.writeFileSync(path.join(sortie, nom + '_demande.json'), JSON.stringify(copie, null, 1));
       decision = { decision: 'refuser', qualite: 'refus', raison: '(mode --sec : Claude non appelé)', controle: [] };
