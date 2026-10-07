@@ -52,6 +52,14 @@ function ecrire(resultats, capital, sortie, args) {
   resultats.slice().sort(function (a, b) { return a.symbole.localeCompare(b.symbole); }).forEach(function (r) { lignes.push(ligneStats(r.symbole, stats(r.trades))); });
   lignes.push(ligneStats('**Tous**', stats(tous)));
   lignes.push('');
+  // par scénario reconnu (tendance / AMD / cassure, H4 ou H1) et par qualité
+  lignes.push('## Par scénario (en R, tous actifs)');
+  lignes.push('');
+  lignes.push(ENTETE);
+  const parSc = {};
+  tous.forEach(function (t) { [t.scenario || '?', 'qualité ' + (t.grade || '?')].forEach(function (k) { (parSc[k] = parSc[k] || []).push(t); }); });
+  Object.keys(parSc).sort().forEach(function (k) { lignes.push(ligneStats(k, stats(parSc[k]))); });
+  lignes.push('');
   lignes.push('## Par actif et par année (en R)');
   resultats.slice().sort(function (a, b) { return a.symbole.localeCompare(b.symbole); }).forEach(function (r) {
     const parAn = {};
@@ -70,10 +78,10 @@ function ecrire(resultats, capital, sortie, args) {
   lignes.push('- Les signaux bloqués par les règles du compte ne libèrent pas l\'actif pour un autre signal (petite approximation).');
   fs.writeFileSync(path.join(sortie, 'rapport.md'), lignes.join('\n'));
   // trades.csv
-  const col = ['symbole', 'sens', 'note', 'killzone', 'statut', 'placé', 'rempli', 'fin', 'entree', 'stop', 'tp1', 'tp2', 'R', 'risquePct', 'gain'];
+  const col = ['symbole', 'sens', 'scenario', 'grade', 'note', 'killzone', 'statut', 'placé', 'rempli', 'fin', 'entree', 'stop', 'tp1', 'tp2', 'R', 'risquePct', 'gain'];
   const iso = function (t) { return t ? new Date(t).toISOString().slice(0, 16).replace('T', ' ') : ''; };
   const csv = [col.join(';')].concat(compte.trades.map(function (t) {
-    return [t.symbole, t.sens, t.note, t.killzone, t.statut, iso(t.tPlace), iso(t.tRempli), iso(t.tFin), t.entree, t.stop, t.tp1, t.tp2, t.R, t.risquePct, Math.round(t.gain * 100) / 100].join(';');
+    return [t.symbole, t.sens, t.scenario, t.grade, t.note, t.killzone, t.statut, iso(t.tPlace), iso(t.tRempli), iso(t.tFin), t.entree, t.stop, t.tp1, t.tp2, t.R, t.risquePct, Math.round(t.gain * 100) / 100].join(';');
   }));
   fs.writeFileSync(path.join(sortie, 'trades.csv'), csv.join('\n'));
   fs.writeFileSync(path.join(sortie, 'resultats.json'), JSON.stringify({ compte: { soldeFinal: compte.soldeFinal, drawdownMax: compte.drawdownMax, refuses: compte.refuses, stats: sC, courbe: compte.courbe },

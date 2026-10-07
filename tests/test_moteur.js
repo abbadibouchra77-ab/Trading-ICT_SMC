@@ -139,12 +139,14 @@ test('Mouvement déjà tradé (même point A H4) : pas de nouveau trade', functi
   const r2 = analyser(g.b, { legsDejaTradees: [r1.cleMouvement] });
   assert.strictEqual(r2.action, 'attendre');
   assert.ok(/déjà été tradé/.test(r2.raison), r2.raison);
+  // la même réaction M15 lue depuis un autre contexte (H1) n'est pas retradée non plus
+  assert.ok(!/H1\|[^|]*\|[0-9]+\|buy -> /.test(r2.raison));
 });
 
-test('Note insuffisante : pas A++, pas de trade', function () {
-  const r = analyser(histoireAchat().b, {}, { reglages: { noteMin: 60 } });
-  assert.strictEqual(r.action, 'attendre');
-  assert.ok(/pas un setup A\+\+/.test(r.raison), r.raison);
+test('Histoire complète tendance H4 + réaction M15 : setup A+++', function () {
+  const r = analyser(histoireAchat().b);
+  assert.strictEqual(r.grade, 'A+++', r.scenario + ' / ' + r.confirmations.join(' | '));
+  assert.ok(/tendance H4/.test(r.scenario), r.scenario);
 });
 
 test('Range : pas de trade dedans', function () {

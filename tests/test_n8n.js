@@ -86,7 +86,7 @@ assert.ok(ordres.every(function (o) { return o.volumeValide && o.objectif && o.e
 s2['Taille de position'] = ordres;
 const ligne = executer('Préparer la ligne du journal', s2, ordres.map(function (o, i) { return { orderId: 500 + i }; }))[0];
 assert.strictEqual(ligne.statut, 'execute');
-assert.ok(ligne.note >= 20 && ligne.expire_a && /ordre limite/.test(ligne.mode_entree));
+assert.ok(ligne.expire_a && /ordre limite/.test(ligne.mode_entree));
 assert.strictEqual(ligne.resultat, 'ouvert');
 assert.ok(ligne.lecture_topdown.length > 50 && ligne.cle_mouvement);
 

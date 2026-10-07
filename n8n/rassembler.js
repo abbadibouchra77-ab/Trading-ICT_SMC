@@ -18,7 +18,7 @@ return [{ json: {
   symbole: t.symbole, sens: t.sens, statut: statut,
   lecture_topdown: String(t.lecture || '').slice(0, 4000),
   zone: t.zone, liquidite: t.liquidite,
-  confirmations: (t.confirmations || []).join(' ; ') + ' (note ' + t.note + ', ' + (t.grade || '') + ')',
+  confirmations: (t.grade || '') + ' ' + (t.scenario || '') + ' : ' + (t.confirmations || []).join(' ; '),
   mode_entree: 'ordre limite ' + (t.typeEntree || '') + ' (' + (t.killzone || '') + ')',
   note: t.note, expire_a: t.expireA, gestion: '',
   entree: t.entree, stop: t.stop, tp1: t.tp1, tp2: t.tp2, rr1: t.rr1, rr2: t.rr2,
