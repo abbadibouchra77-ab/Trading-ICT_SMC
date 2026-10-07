@@ -43,7 +43,7 @@ const DEFAUT = {
   pivotLiquidite: 3,    // sommets pivots pour les objectifs
   rechercheLiquidite: 300,
   entree: 'fvg',        // 'fvg' (50 % du FVG du MSS, sinon corps) ou 'marche'
-  stopMode: 'creux',    // 'creux' (sous le creux du retour), 'poi' (sous le bas de la POI HTF si plus bas), 'recul' (sous le plus bas des stopRecul dernières bougies M15 : origine de la jambe)
+  stopMode: 'creux',    // 'origine' (derrière la mèche de la bougie qui a créé le mouvement de la POI HTF), 'creux' (sous le creux du retour), 'poi' (sous le bas de la POI HTF si plus bas), 'recul' (sous le plus bas des stopRecul dernières bougies M15 : origine de la jambe)
   stopRecul: 96,        // mode 'recul' : nombre de bougies M15 regardées (96 = 24 h)
   margeStop: 0.1,       // marge sous le creux, en ATR M15
   stopMinAtr: 0.3,      // stop trop serré : on refuse
@@ -84,11 +84,11 @@ function poiHtf(H, htfMs, P) {
     const taille = function (z) { return (!P.zoneMinAtrH || z >= P.zoneMinAtrH * atrH[i]) && (!P.zoneMaxAtrH || z <= P.zoneMaxAtrH * atrH[i]); };
     const biaisOk = !P.biaisEma || H[i].c > ema[i];
     if (!biaisOk) continue;
-    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false });
+    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false, origine: H[i - 2].l });
     // OB : dernière bougie baissière avant une bougie haussière qui clôture au-dessus de son plus haut (déplacement)
     const j = i - 1;
     if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i) && taille(H[j].h - H[j].l))
-      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, touche: -1, utilise: false });
+      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, touche: -1, utilise: false, origine: H[j].l });
   }
   return zs;
 }
@@ -194,7 +194,8 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
         entree = ok[0].e; type = ok[0].t;
       }
       let base = bs[m.iBas].l;
-      if (P.stopMode === 'poi') base = Math.min(base, z.bas);
+      if (P.stopMode === 'origine') base = Math.min(base, z.origine);   // derrière la mèche de la bougie qui a créé le mouvement (origine de la POI HTF)
+      else if (P.stopMode === 'poi') base = Math.min(base, z.bas);
       else if (P.stopMode === 'recul') for (let q = Math.max(0, k - P.stopRecul); q <= k; q++) base = Math.min(base, bs[q].l);
       const stop = base - P.margeStop * atr, risque = entree - stop;
       if (!(risque >= P.stopMinAtr * atr)) continue;
