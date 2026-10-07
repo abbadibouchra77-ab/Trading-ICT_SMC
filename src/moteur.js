@@ -22,11 +22,13 @@
 
 // ------------------------------- Réglages -------------------------------------------
 const REGLAGES = {
-    rrMin: 2,                // TP1 à au moins 2R
+  rrMin: 2,                // TP1 à au moins 2R
   margeStopAtr: 0.15,      // marge derrière la mèche du balayage M15, en ATR M15
   fraicheurMSS: 8,         // le MSS M15 doit dater de 8 bougies (2 h) au plus
   mssPivot: 3,             // le MSS casse un vrai sommet M15 (pivot de 3 bougies de chaque côté), pas une petite bosse
   stopMinAtrH1: 1.0,       // le stop est au moins à 1 ATR H1 de l'entrée : jamais collé à l'entrée
+  entreeRejet: 0.25,       // entrée sur rejet : ordre limite à 25 % de la mèche de liquidation (0 = désactivée)
+  dureeRejet: 1,           // l'ordre sur rejet expire au bout de 1 h (sinon on attend le MSS)
   rangeH1: { bougies: 24, largeurAtr: 3, efficacite: 0.3 }, // H1 en range : 24 bougies dans 3 ATR, sans direction
   reactionMin: 8,          // la réaction M15 est le plus bas (haut) d'au moins 8 bougies
   fenetreBalayageM15: 48,  // balayage M15 cherché sur les 12 dernières heures
@@ -747,33 +749,53 @@ function analyserCote(d, dc, S, ctx, R) {
       .filter(function (g) { return g.i >= iA - 3 && g.i <= iA && g.meche <= A15 + 1e-9; }).slice(-1)[0] || null;
     if (!bal && !k.liquidite.length) return stop('aucune prise de liquidité dans l\'histoire : la Smart Money ne s\'est pas montrée.');
     const i0 = bal ? bal.i : iA;
-    const sommetsAvant = pivots(M15, R.mssPivot).filter(function (p) { return p.type === 'H' && p.i + R.mssPivot <= i0; });
-    if (!sommetsAvant.length) return stop('pas de sommet M15 de référence pour le MSS.');
-    const ref = sommetsAvant[sommetsAvant.length - 1];
-    let iMSS = -1; for (let j = iA; j < n15; j++) if (M15[j].c > ref.p) { iMSS = j; break; }
-    if (iMSS < 0) return stop('réaction M15 à ' + P(A15) + ', on attend le MSS (clôture au-delà de ' + P(ref.p) + ').');
-    if (iMSS < n15 - R.fraicheurMSS) return stop('le MSS M15 date de plus de ' + (R.fraicheurMSS / 4) + ' h : signal périmé.');
-    const corpsMoy15 = moyenne(M15.slice(Math.max(0, i0 - 20), i0).map(corps));
-    let iDep = -1; for (let q = i0; q <= iMSS; q++) if (M15[q].c > M15[q].o && corps(M15[q]) >= 1.5 * corpsMoy15) iDep = q;
-    if (iDep < 0) return stop('MSS M15 sans vrai déplacement (pas de grande bougie).');
-    // Pas de trade dans un range : si le H1 était en range avant la réaction, le MSS doit faire sortir le prix du range.
-    const boite = rangeH1(M15[i0].t);
-    if (boite && M15[iMSS].c <= boite.haut) return stop('le marché est en range H1 (' + P(boite.bas) + ' - ' + P(boite.haut) + ') et le MSS n\'en est pas sorti : entrée prématurée, on attend.');
-    const kz = enKZ(M15[iMSS].t);
+    // Deux façons d'entrer :
+    //  - après le MSS : clôture au-delà d'un vrai sommet M15 avec déplacement, ordre limite au FVG / OB du déplacement ;
+    //  - sur le rejet : dans une zone d'intérêt, la bougie qui fait l'extrême prend de la liquidité et rejette
+    //    (mèche de liquidation, clôture dans la bonne moitié) : ordre limite dans la mèche, sans attendre le MSS.
+    function entreeMSS() {
+      const sommetsAvant = pivots(M15, R.mssPivot).filter(function (p) { return p.type === 'H' && p.i + R.mssPivot <= i0; });
+      if (!sommetsAvant.length) return { erreur: 'pas de sommet M15 de référence pour le MSS.' };
+      const ref = sommetsAvant[sommetsAvant.length - 1];
+      let iMSS = -1; for (let j = iA; j < n15; j++) if (M15[j].c > ref.p) { iMSS = j; break; }
+      if (iMSS < 0) return { erreur: 'réaction M15 à ' + P(A15) + ', on attend le MSS (clôture au-delà de ' + P(ref.p) + ').' };
+      if (iMSS < n15 - R.fraicheurMSS) return { erreur: 'le MSS M15 date de plus de ' + (R.fraicheurMSS / 4) + ' h : signal périmé.' };
+      const corpsMoy15 = moyenne(M15.slice(Math.max(0, i0 - 20), i0).map(corps));
+      let iDep = -1; for (let q = i0; q <= iMSS; q++) if (M15[q].c > M15[q].o && corps(M15[q]) >= 1.5 * corpsMoy15) iDep = q;
+      if (iDep < 0) return { erreur: 'MSS M15 sans vrai déplacement (pas de grande bougie).' };
+      // Pas de trade dans un range : si le H1 était en range avant la réaction, le MSS doit faire sortir le prix du range.
+      const boite = rangeH1(M15[i0].t);
+      if (boite && M15[iMSS].c <= boite.haut) return { erreur: 'le marché est en range H1 (' + P(boite.bas) + ' - ' + P(boite.haut) + ') et le MSS n\'en est pas sorti : entrée prématurée, on attend.' };
+      const dansJambe = function (z) { return z.role === 'achat' && z.i >= i0 && z.i <= Math.min(n15 - 1, iMSS + 2); };
+      const fvgs = zM15.filter(function (z) { return z.type === 'FVG' && dansJambe(z); }).concat(zM15.filter(function (z) { return z.type === 'BPR' && dansJambe(z); }))
+        .sort(function (a, b) { return (a.type === 'FVG' ? 0 : 1) - (b.type === 'FVG' ? 0 : 1) || Math.abs(a.i - iMSS) - Math.abs(b.i - iMSS); });
+      const obs = zM15.filter(function (z) { return z.type === 'OB' && z.role === 'achat' && z.iOrigine >= i0 - 1 && z.i <= iMSS + 1; });
+      let zoneEntree, typeEntree;
+      if (fvgs.length) { zoneEntree = fvgs[0]; typeEntree = zoneEntree.type + ' M15 (50 %)'; }
+      else if (obs.length) { zoneEntree = obs[obs.length - 1]; typeEntree = 'OB M15 (50 %)'; }
+      else return { erreur: 'MSS sans FVG ni OB M15 pour placer l\'ordre limite.' };
+      const entree = (zoneEntree.bas + zoneEntree.haut) / 2;
+      for (let j = zoneEntree.i + 1; j < n15; j++) if (M15[j].l <= entree) return { erreur: 'le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : ordre manqué, on ne court pas après.' };
+      return { mode: 'MSS', entree: entree, typeEntree: typeEntree, iDep: iDep, iSignal: iMSS, ref: ref };
+    }
+    function entreeRejet() {
+      if (!R.entreeRejet || iA < n15 - 2) return null;
+      // liquidité prise par la mèche du rejet ou par l'une des 3 bougies d'avant (la mèche de liquidation)
+      const prise = bal || grouperBalayages(balayagesBas(M15, niveaux, atr15, Math.max(1, iA - 3))).some(function (g) { return g.i >= iA - 3 && g.i <= iA; });
+      if (!prise) return null;
+      const b = M15[iA], meche = Math.min(b.o, b.c) - b.l;
+      if (!(meche >= 0.5 * (b.h - b.l) && b.c >= (b.h + b.l) / 2)) return null;
+      if (!zonesSous(A15, 0.2 * atr4, ctx.maintenant, ['H1', 'H4', 'D1', 'W1']).length) return null;
+      const entree = Math.min(b.o, b.c) - R.entreeRejet * meche;
+      for (let j = iA + 1; j < n15; j++) if (M15[j].l <= entree) return null;
+      return { mode: 'rejet', entree: entree, typeEntree: 'rejet M15 (mèche de liquidation)', iDep: iA, iSignal: iA, ref: null };
+    }
+    let m = entreeMSS();
+    if (m.erreur) { const rj = entreeRejet(); if (!rj) return stop(m.erreur); m = rj; }
+    const kz = enKZ(M15[m.iSignal].t);
     if (R.killzoneObligatoire && !ctx.crypto && (!kz || !enKZ(ctx.maintenant))) return stop('hors killzone (Londres 02h-05h, New York 07h-11h, heure de NY) : pas d\'ordre.');
-
-    // Entrée : ordre limite au FVG (sinon BPR, sinon OB) du déplacement
-    let B15 = -Infinity; for (let j = iMSS; j < n15; j++) B15 = Math.max(B15, M15[j].h);
-    const dansJambe = function (z) { return z.role === 'achat' && z.i >= i0 && z.i <= Math.min(n15 - 1, iMSS + 2); };
-    const fvgs = zM15.filter(function (z) { return z.type === 'FVG' && dansJambe(z); }).concat(zM15.filter(function (z) { return z.type === 'BPR' && dansJambe(z); }))
-      .sort(function (a, b) { return (a.type === 'FVG' ? 0 : 1) - (b.type === 'FVG' ? 0 : 1) || Math.abs(a.i - iMSS) - Math.abs(b.i - iMSS); });
-    const obs = zM15.filter(function (z) { return z.type === 'OB' && z.role === 'achat' && z.iOrigine >= i0 - 1 && z.i <= iMSS + 1; });
-    let zoneEntree, typeEntree;
-    if (fvgs.length) { zoneEntree = fvgs[0]; typeEntree = zoneEntree.type + ' M15 (50 %)'; }
-    else if (obs.length) { zoneEntree = obs[obs.length - 1]; typeEntree = 'OB M15 (50 %)'; }
-    else return stop('MSS sans FVG ni OB M15 pour placer l\'ordre limite.');
-    const entree = (zoneEntree.bas + zoneEntree.haut) / 2;
-    for (let j = zoneEntree.i + 1; j < n15; j++) if (M15[j].l <= entree) return stop('le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : ordre manqué, on ne court pas après.');
+    const entree = m.entree, typeEntree = m.typeEntree, iDep = m.iDep, ref = m.ref;
+    let B15 = -Infinity; for (let j = m.iSignal; j < n15; j++) B15 = Math.max(B15, M15[j].h);
     // stop derrière la réaction M15, et au moins à 1 ATR H1 de l'entrée (le bruit ne doit pas le toucher)
     const stopPx = Math.min(A15 - R.margeStopAtr * atr15, entree - R.stopMinAtrH1 * atr1);
     const risque = entree - stopPx;
@@ -808,7 +830,7 @@ function analyserCote(d, dc, S, ctx, R) {
     }
     if (Math.min(b0.o, b0.c) - b0.l >= 0.4 * (b0.h - b0.l)) pts(1, 'mèche de liquidation');
     if (ses.ouvertureMinuit !== null && ny(b0.t).jour === ses.jourMinuit && A15 < ses.ouvertureMinuit) pts(1, 'Power of 3 : manipulation ' + (S > 0 ? 'sous' : 'au-dessus de') + ' l\'ouverture de minuit');
-    if (kz) pts(1, 'MSS en killzone ' + kz.nom);
+    if (kz) pts(1, (ref ? 'MSS' : 'rejet') + ' en killzone ' + kz.nom);
     // confirmation H1 au même endroit : rejet, CHoCH ou FVG
     const tA = M15[iA].t;
     const i1 = H1.findIndex(function (b) { return b.t <= tA && tA < b.t + DUREE.H1; });
@@ -835,7 +857,7 @@ function analyserCote(d, dc, S, ctx, R) {
     const grade = (k.type === 'tendance' && oteHTF && zR.length && bal && r15 >= 0.5) ? 'A+++' : 'A++';
     r.ok = true; r.note = note; r.grade = grade; r.contexte = k;
     r.entree = entree; r.stopPx = stopPx; r.risque = risque; r.typeEntree = typeEntree; r.tp1 = tp1; r.tp2 = tp2; r.kz = kz;
-    r.bal = bal; r.A15 = A15; r.iA = iA; r.zR = zR; r.rHTF = rHTF; r.ref = ref;
+    r.mode = m.mode; r.bal = bal; r.A15 = A15; r.iA = iA; r.zR = zR; r.rHTF = rHTF; r.ref = ref;
     return r;
   }
 
@@ -850,8 +872,9 @@ function analyserCote(d, dc, S, ctx, R) {
   const t = bons[0], k = t.contexte;
   histoire.push('Contexte : ' + k.recit + '.');
   histoire.push('M15 : ' + (t.bal ? 'balayage de ' + t.bal.niveaux.slice(0, 3).map(function (x) { return x.genre; }).join(' + ') + ' (mèche ' + P(t.bal.meche) + ')' : 'réaction à ' + P(t.A15)) +
-    ', MSS ' + (t.kz ? 'en killzone ' + t.kz.nom + ' ' : '') + 'avec déplacement au-delà de ' + P(t.ref.p) + '.');
-  res.ok = true; res.note = t.note; res.points = t.points; res.grade = t.grade;
+    (t.ref ? ', MSS ' + (t.kz ? 'en killzone ' + t.kz.nom + ' ' : '') + 'avec déplacement au-delà de ' + P(t.ref.p) + '.'
+           : ', rejet immédiat (mèche de liquidation dans la zone d\'intérêt) : entrée sans attendre le MSS.'));
+  res.ok = true; res.note = t.note; res.modeEntree = t.mode; res.points = t.points; res.grade = t.grade;
   res.entree = P(t.entree); res.stop = P(t.stopPx); res.typeEntree = t.typeEntree;
   res.tp1 = P(t.tp1.p); res.tp1Nom = t.tp1.nom; res.rr1 = +((t.tp1.p - t.entree) / t.risque).toFixed(2);
   res.tp2 = t.tp2 ? P(t.tp2.p) : null; res.tp2Nom = t.tp2 ? t.tp2.nom : null; res.rr2 = t.tp2 ? +((t.tp2.p - t.entree) / t.risque).toFixed(2) : null;
@@ -860,6 +883,7 @@ function analyserCote(d, dc, S, ctx, R) {
   // L'ordre limite expire à la fin de la killzone en cours (cryptos : au bout de quelques heures)
   let expire = ctx.maintenant + R.dureeOrdre * 3600000;
   if (!ctx.crypto && t.kz && enKZ(ctx.maintenant)) { expire = ctx.maintenant; while (ny(expire).hm < t.kz.fin && expire < ctx.maintenant + 6 * 3600000) expire += 5 * 60000; }
+  if (t.mode === 'rejet') expire = ctx.maintenant + R.dureeRejet * 3600000;
   res.expireA = new Date(expire).toISOString();
   res.biais = biais;
   res.liquidite = (t.bal ? t.bal.niveaux.map(function (x) { return x.genre; }).join(' + ') + ' balayé à ' + P(t.bal.meche) : 'réaction M15 à ' + P(t.A15)) +

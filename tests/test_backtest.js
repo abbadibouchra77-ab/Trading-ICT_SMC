@@ -22,7 +22,11 @@ function versMs(b) { return b.map(function (x) { return { time: Date.parse(x.tim
 function suite(g, cibles) { for (const c of cibles) g.vers(g.P0 + c[0], c[1], 0.2); return g; }
 // le trade du setup de l'histoire (le bot tourne 24h/24 : il peut aussi prendre d'autres trades avant)
 const FIN_HISTOIRE = (function () { const b = histoireAchat().b; return Date.parse(b[b.length - 1].time); })();
-function tradeHistoire(r) { return r.trades.filter(function (t) { return t.tPlace >= FIN_HISTOIRE - 2 * 3600000; })[0]; }
+// (un ordre « sur rejet » non rempli peut expirer avant : on prend le premier trade rempli, sinon le dernier)
+function tradeHistoire(r) {
+  const ts = r.trades.filter(function (t) { return t.tPlace >= FIN_HISTOIRE - 2 * 3600000; });
+  return ts.filter(function (t) { return t.statut !== 'expiré'; })[0] || ts[ts.length - 1];
+}
 
 test('Lecture CSV (séparateurs, formats d\'heure) et regroupement M1 -> M15', function () {
   const dir = fs.mkdtempSync('/tmp/claude-0/csv-');
