@@ -54,6 +54,8 @@ const DEFAUT = {
   ctxTol: 0.3,          // mode 'swing' : tolérance (en ATR M15) autour de la POI pour l'origine de la jambe
   expireBougies: 300,   // mode 'swing' : l'ordre limite attend 300 bougies M15 (comptées en bougies : le week-end ne compte pas)
   tpDyn: true,          // mode 'swing' : la cible (1re liquidité non prise) est calculée AU REMPLISSAGE ; l'ordre n'est annulé que si le stop est touché avant
+  htfs: null,           // mode 'swing' : plusieurs unités de temps pour les POI, ex. [240, 1440] (null = seulement htf)
+  obLive: true,         // POI en direct : un OB haussier devient actif dès que la bougie HTF en cours casse le plus haut de la bougie baissière précédente
   mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
   sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
   sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
@@ -118,13 +120,17 @@ function poiHtf(H, htfMs, P) {
     if (!biaisOk) continue;
     if (P.poiLive && /fvg/.test(P.poi) && H[i - 1].c > H[i - 1].o && H[i - 1].c > H[i - 2].h && H[i].o > H[i - 2].h && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) {
       // FVG « en direct » : bas = haut de la 1re bougie ; le haut descend avec le plus bas de la 3e bougie tant qu'elle n'est pas close
-      zs.push({ genre: 'FVG live', live: true, bas: H[i - 2].h, haut: Infinity, dispo: H[i].t, fin: H[i].t + htfMs, minAtrH: P.zoneMinAtrH * atrH[i], touche: -1, utilise: false, origine: H[i - 2].l, t0: H[i - 2].t });
+      zs.push({ genre: 'FVG live', live: true, ms: htfMs, bas: H[i - 2].h, haut: Infinity, dispo: H[i].t, fin: H[i].t + htfMs, minAtrH: P.zoneMinAtrH * atrH[i], touche: -1, utilise: false, origine: H[i - 2].l, t0: H[i - 2].t });
     }
-    if (!P.poiLive && /fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, t0: H[i - 2].t, touche: -1, utilise: false, origine: H[i - 2].l });
+    if (!P.poiLive && /fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, t0: H[i - 2].t, touche: -1, utilise: false, origine: H[i - 2].l, ms: htfMs });
+    // OB en direct : la bougie précédente est baissière ; la zone est armée quand la bougie en cours casse son plus haut
+    if (P.obLive && P.poiLive && /ob/.test(P.poi) && H[i - 1].c < H[i - 1].o && taille(H[i - 1].h - H[i - 1].l)) {
+      zs.push({ genre: 'OB live', bas: H[i - 1].l, haut: H[i - 1].h, dispo: H[i].t, fin: H[i].t + htfMs, seuil: H[i - 1].h, arme: false, touche: -1, utilise: false, origine: H[i - 1].l, t0: H[i - 1].t, ms: htfMs });
+    }
     // OB : dernière bougie baissière avant une bougie haussière qui clôture au-dessus de son plus haut (déplacement)
     const j = i - 1;
-    if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i) && taille(H[j].h - H[j].l))
-      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, t0: H[j].t, touche: -1, utilise: false, origine: H[j].l });
+    if (!(P.obLive && P.poiLive) && /ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i) && taille(H[j].h - H[j].l))
+      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, t0: H[j].t, touche: -1, utilise: false, origine: H[j].l, ms: htfMs });
   }
   return zs;
 }
@@ -498,15 +504,25 @@ function setupsOte2(bs, H, atrs, P, depuis, jusqua) {
 // la jambe = du creux le plus bas depuis le sommet précédent jusqu'à ce sommet. Elle est valide si elle casse la structure (nouveau sommet
 // plus haut que le précédent), si elle a une taille suffisante et si son origine est dans une POI H4 (contexte). Zone d'entrée : FVG / OB de la
 // jambe dont le 50 % est dans la bande OTE 50-78 % ; ordre limite, stop sous l'origine de la jambe, cible = première liquidité.
-function setupsSwing(bs, H, atrs, P, depuis, jusqua, ema) {
-  const htfMs = P.htf * 60000, zs = P.ctx === 'poi' ? poiHtf(H, htfMs, P) : [], veille = plusHautsVeille(bs), out = [], L = P.legPivot, groupe = {};
+function setupsSwing(bs, H, atrs, P, depuis, jusqua, ema, Hs) {
+  const htfMs = P.htf * 60000;
+  let zs = [];
+  if (P.ctx === 'poi') {
+    if (Hs && Hs.length) for (const x of Hs) zs = zs.concat(poiHtf(x.H, x.tf * 60000, Object.assign({}, P, { htf: x.tf })));
+    else zs = poiHtf(H, htfMs, P);
+    zs.sort(function (a, b) { return a.dispo - b.dispo; });
+  }
+  const veille = plusHautsVeille(bs), out = [], L = P.legPivot, groupe = {};
   let prochaine = 0, actives = [], debut = 0, dernierSommet = -Infinity, vivant = null;
   for (let k = 60; k < bs.length - 1; k++) {
     const t = bs[k].t + 15 * 60000, atr = atrs[k];
     if (vivant && (bs[k].l < vivant.bas || k - vivant.k > P.ctxDuree)) vivant = null;   // l'origine du mouvement est reprise : le contexte tombe
     while (prochaine < zs.length && zs[prochaine].dispo <= t) { actives.push(zs[prochaine]); prochaine++; }
-    for (const z of actives) if (z.live && bs[k].t < z.fin) z.haut = Math.min(z.haut, bs[k].l);
-    actives = actives.filter(function (z) { return !z.utilise && bs[k].c >= z.bas && t - z.dispo <= P.ageMax * htfMs && !(z.haut <= z.bas); });
+    for (const z of actives) {
+      if (z.live && bs[k].t < z.fin) z.haut = Math.min(z.haut, bs[k].l);
+      if (z.seuil !== undefined && !z.arme) { if (bs[k].t < z.fin && bs[k].h > z.seuil) z.arme = true; else if (bs[k].t >= z.fin) z.utilise = true; }   // OB en direct : armé quand la bougie en cours casse le plus haut précédent
+    }
+    actives = actives.filter(function (z) { return !z.utilise && bs[k].c >= z.bas && t - z.dispo <= P.ageMax * (z.ms || htfMs) && !(z.haut <= z.bas); });
     const p = k - L;
     if (p <= debut || !pivotHaut(bs, p, L)) continue;                  // sommet pivot confirmé à la clôture de k
     const B = bs[p].h; let iA = debut; for (let q = debut; q <= p; q++) if (bs[q].l < bs[iA].l) iA = q;
@@ -518,7 +534,7 @@ function setupsSwing(bs, H, atrs, P, depuis, jusqua, ema) {
     if (!cassure || B - bs[iA].l < P.jambeMinAtr * atr) continue;
     let ctxOk = P.ctx === 'none';
     if (P.ctx === 'poi') {
-      ctxOk = actives.some(function (z) { return z.dispo <= bs[iA].t + 15 * 60000 && bs[iA].l >= z.bas - P.ctxTol * atr && bs[iA].l <= z.haut + P.ctxTol * atr; });
+      ctxOk = actives.some(function (z) { return z.arme !== false && z.dispo <= bs[iA].t + 15 * 60000 && bs[iA].l >= z.bas - P.ctxTol * atr && bs[iA].l <= z.haut + P.ctxTol * atr; });
       if (ctxOk) vivant = { bas: bs[iA].l, k: k };                // validé par la POI : les jambes suivantes (BOS) restent valides
       else if (vivant && bs[iA].l >= vivant.bas) ctxOk = true;
     } else if (P.ctx === 'ema') ctxOk = ema[k] > 0;
@@ -548,13 +564,14 @@ function setupsSwing(bs, H, atrs, P, depuis, jusqua, ema) {
 function backtesterActif(actif, M15, P, depuis, jusqua) {
   const bs = versBs(M15), bm = miroir(bs);
   const H = versBs(P.htf === 15 ? M15 : regrouper(M15, P.htf)), Hm = miroir(H);
+  const HsA = (P.htfs || []).map(function (tf) { return { tf: tf, H: versBs(regrouper(M15, tf)) }; }), HsV = HsA.map(function (x) { return { tf: x.tf, H: miroir(x.H) }; });
   const atrA = atrSerie(bs, 14), atrV = atrSerie(bm, 14), veilleA = plusHautsVeille(bs), veilleV = plusHautsVeille(bm);
   const regl = { dureeMaxJours: 20, margeBeR: 0.05, margeStopAtr: 0.1, pasMinR: 0.1 };
   // setups des deux sens, triés dans le temps ; un seul trade à la fois par actif
   const tous = [];
   for (const S of [1, -1]) {
-    const g = S > 0 ? bs : bm;
-    for (const s of (P.mode === 'swing' ? function (g, Hh, a, PP, d, j) { return setupsSwing(g, Hh, a, PP, d, j, emaSerieH(g, PP)); } : P.mode === 'ote2' ? setupsOte2 : P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
+    const g = S > 0 ? bs : bm, S0 = S;
+    for (const s of (P.mode === 'swing' ? function (g, Hh, a, PP, d, j) { return setupsSwing(g, Hh, a, PP, d, j, emaSerieH(g, PP), (S0 > 0 ? HsA : HsV)); } : P.mode === 'ote2' ? setupsOte2 : P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
   }
   tous.sort(function (a, b) { return a.s.t - b.s.t; });
   const trades = [];
