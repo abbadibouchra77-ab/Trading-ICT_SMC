@@ -18,7 +18,7 @@ from images_pertes import lire_csv, regrouper, bisect
 
 def heure(t): return datetime.fromtimestamp(t / 1000, timezone.utc).strftime('%d/%m/%Y %H:%M')
 
-def image(donnees, b, tr, lec, sym, nom):
+def image(donnees, b, tr, lec, sym, nom, quoi='trade perdant'):
     t = b[0]
     i0, i1 = bisect(t, tr['tPlace']), bisect(t, tr['tFin']) + 1
     minutes = 15 if i1 - i0 <= 100 else 60
@@ -61,9 +61,9 @@ def image(donnees, b, tr, lec, sym, nom):
     for s in ax.spines.values(): s.set_color(GRILLE)
     sens = 'achat' if tr['sens'] == 'buy' else 'vente'
     ut = 'M15' if minutes == 15 else 'H1'
-    fig.text(0.05, 0.965, '%s : trade perdant du %s UTC (%s, %s, %s)' % (sym, heure(tr['tPlace']), sens, tr.get('scenario') or '?', tr.get('grade') or ''),
+    fig.text(0.05, 0.965, '%s : %s du %s UTC (%s, %s, %s)' % (sym, quoi, heure(tr['tPlace']), sens, tr.get('scenario') or '?', tr.get('grade') or ''),
              fontsize=15, color=ENCRE, ha='left', va='top')
-    fig.text(0.05, 0.935, 'Résultat %.2fR · killzone %s · bougies %s, heure UTC · gris = de l\'ordre placé à la sortie' % (tr['R'], tr.get('killzone') or '-', ut),
+    fig.text(0.05, 0.935, (('Ordre expiré sans être rempli, %.2fR' if tr.get('statut') == 'expiré' else 'Résultat %.2fR') + ' · %s · bougies %s, heure UTC · gris = de l\'ordre placé à la sortie') % (tr['R'], (tr.get('killzone') or '-') if str(tr.get('killzone')).startswith('hors') else 'killzone ' + str(tr.get('killzone')), ut),
              fontsize=10, color=ENCRE2, ha='left', va='top')
     # la lecture du bot
     texte = 'Lecture du bot au moment de placer l\'ordre :\n' + '\n'.join(textwrap.fill(x.strip() + ('.' if not x.strip().endswith('.') else ''), 175)
