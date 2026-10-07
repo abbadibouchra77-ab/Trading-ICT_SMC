@@ -60,7 +60,9 @@ assert.strictEqual(executer('Préparer le cycle', Object.assign({}, sorties, { C
 
 // Lecture ICT/SMC sur l'actif XAUUSD avec les bougies du scénario
 const actif = actifs.find(function (a) { return a.symbol === 'XAUUSD'; });
+// (le scénario de test est écrit pour l'ancienne lecture par scénarios)
 const s2 = Object.assign({}, sorties, {
+  Configuration: [Object.assign({}, config, { strategie: 'lecture' })],
   'Actif en cours': [actif],
   'Bougies Monthly': [{ error: { message: 'timeframe inconnu' } }], // le bridge refuse : reconstruction depuis le Daily
   'Bougies Weekly': [{ candles: br.W1 }],

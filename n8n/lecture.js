@@ -10,7 +10,7 @@ const correle = actif.correle ? { M15: liste('Bougies M15 corrélées') } : null
 let r;
 try {
   r = analyserActif(actif.symbol, brut, correle, Date.now(), { legsDejaTradees: actif.legsDejaTradees || [] },
-    { crypto: !!actif.crypto, correle: actif.correle || '', reglages: { rrMin: Math.max(2, Number(cfg.rrMin) || 2) } });
+    { crypto: !!actif.crypto, correle: actif.correle || '', reglages: Object.assign({ rrMin: Math.max(2, Number(cfg.rrMin) || 2) }, cfg.strategie ? { strategie: cfg.strategie } : {}) });
 } catch (e) {
   r = { symbole: actif.symbol, action: 'attendre', raison: 'Erreur du moteur : ' + String(e && e.message || e).slice(0, 300) };
 }
