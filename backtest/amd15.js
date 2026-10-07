@@ -35,7 +35,9 @@ const DEFAUT = {
   sortieCassure: 0.1,               // cas 2 : clôture au-delà du range d'au moins 0,1 ATR
   milieuDistribution: true,         // cas 1 : la distribution clôture au-delà du milieu du range
   entree: 'fvg',                    // 'fvg' (50 % du FVG, sinon 50 % du corps) ou 'corps' (50 % du corps)
-  ut: 15,                           // unité de temps en minutes : 15 (M15), 30 (M30), 60 (H1)
+  liquidite: false,                 // A : la mèche doit prendre le plus bas / haut de la veille ou de la session d'Asie
+  tendance: null,                   // B : 'H4', 'D1' ou 'H4+D1' (on ne trade que dans le sens de la tendance)
+  ut: 15,                          // unité de temps en minutes : 15 (M15), 30 (M30), 60 (H1)
   stop: 'meche',                    // 'meche' (au-delà de la mèche / bougie de cassure), 'milieu' (cassure : sous le milieu du range), 'range' (au-delà du range entier)
   stopAtr: 0,                       // distance minimale du stop en ATR M15 (0 = pas de minimum)
   margeStop: 0.1,                  // marge du stop en ATR
@@ -166,12 +168,57 @@ function niveaux(bs, s, k, P) {
   return { entree: entree, stop: stop, tp1: entree + P.rr1 * risque, tp2: P.rr2 ? entree + P.rr2 * risque : null, type: type };
 }
 
+// Contexte de chaque bougie k (dans le sens « achat » du graphique g, retourné ou non) :
+//  - jourBas[k] : plus bas de la veille (jour UTC précédent) ; asieBas[k] : plus bas de la session d'Asie du jour
+//    (00h-06h UTC) formé avant la bougie k ;
+//  - tendH4[k] / tendD1[k] : +1 si la dernière bougie H4 / Daily clôturée est au-dessus de sa moyenne (EMA 50 / EMA 20), sinon -1.
+function contexte(g, ut) {
+  const n = g.length, jourBas = new Array(n).fill(NaN), asieBas = new Array(n).fill(NaN), tendH4 = new Array(n).fill(0), tendD1 = new Array(n).fill(0);
+  let jour = -1, basJour = Infinity, basVeille = NaN, basAsie = Infinity;
+  for (let k = 0; k < n; k++) {
+    const j = Math.floor(g[k].t / 86400000);
+    if (j !== jour) { if (jour >= 0) basVeille = basJour; jour = j; basJour = Infinity; basAsie = Infinity; }
+    jourBas[k] = basVeille; asieBas[k] = Number.isFinite(basAsie) ? basAsie : NaN;
+    basJour = Math.min(basJour, g[k].l);
+    if (new Date(g[k].t).getUTCHours() < 6) basAsie = Math.min(basAsie, g[k].l);
+  }
+  function tendance(dureeMin, emaN, out) {
+    let cle = -1, cl = null, ema = null, sens = 0; const a = 2 / (emaN + 1);
+    for (let k = 0; k < n; k++) {
+      const c = Math.floor(g[k].t / (dureeMin * 60000));
+      if (c !== cle) { if (cl !== null) { ema = ema === null ? cl : ema + a * (cl - ema); sens = cl > ema ? 1 : -1; } cle = c; }
+      cl = g[k].c;
+      // la bougie k clôture la période H4 / D1 en cours ? alors elle compte dès sa clôture
+      const fin = Math.floor((g[k].t + ut * 60000) / (dureeMin * 60000)) !== c;
+      out[k] = fin ? ((ema === null ? cl : ema + a * (cl - ema)) < cl ? 1 : -1) : sens;
+    }
+  }
+  tendance(240, 50, tendH4); tendance(1440, 20, tendD1);
+  return { jourBas: jourBas, asieBas: asieBas, tendH4: tendH4, tendD1: tendD1 };
+}
+
+// Filtres de contexte (P.liquidite : la mèche prend le plus bas de la veille ou de l'Asie ; P.tendance : 'H4', 'D1' ou 'H4+D1')
+function contexteOk(cx, s, P) {
+  if (P.liquidite && s.cas === 'manipulation') {
+    const prise = [cx.jourBas[s.m], cx.asieBas[s.m]].some(function (nv) {
+      return Number.isFinite(nv) && s.extreme < nv && nv <= s.rg.bas + 0.25 * s.rg.hauteur; // la mèche passe sous le niveau, qui est au bas du range
+    });
+    if (!prise) return false;
+  }
+  if (P.tendance) {
+    if (/H4/.test(P.tendance) && cx.tendH4[s.q] <= 0) return false;
+    if (/D1/.test(P.tendance) && cx.tendD1[s.q] <= 0) return false;
+  }
+  return true;
+}
+
 function miroir(bs) { return bs.map(function (b) { return { t: b.t, o: -b.o, h: -b.l, l: -b.h, c: -b.c, v: b.v }; }); }
 
 function backtesterActif(actif, M15, P, depuis, jusqua) {
   const bs = M15.map(function (b) { return { t: b.time, o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume }; });
   const bm = miroir(bs);
   const atrA = atrSerie(bs, 14), atrV = atrSerie(bm, 14);
+  const cxA = contexte(bs, P.ut), cxV = contexte(bm, P.ut);
   const trades = [];
   let libre = 0;
   const regl = { dureeMaxJours: 20, margeBeR: 0.05, margeStopAtr: 0.1, pasMinR: 0.1 };
@@ -186,7 +233,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
       const qs = P.entree === 'fvg' ? [k - 1, k] : [k];
       for (const q of qs) {
         const s = signalAchat(g, q, atrs, P);
-        if (!s) continue;
+        if (!s || !contexteOk(S > 0 ? cxA : cxV, s, P)) continue;
         // en mode FVG : à la clôture de q on attend la bougie suivante ; à la clôture de q+1 on place l'ordre
         if (P.entree === 'fvg' && q === k) continue;
         const nv = niveaux(g, s, k, P);
