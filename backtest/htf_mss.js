@@ -27,6 +27,10 @@ const DEFAUT = {
   niveauEntree: 50,     // 50 = milieu de la zone, 0 = bord proche (haut de la zone, entrée au 1er contact)
   obCorps: 1.0,         // OB HTF : la bougie qui suit a un corps ≥ 1 × le corps moyen des 20 bougies
   biaisEma: 0,          // 0 = aucun ; sinon la clôture H4 doit être du bon côté de l'EMA de cette période (ex. 50)
+  fvgCorpsMin: 0,       // FVG HTF : la bougie centrale (l'impulsion) a un corps ≥ ce multiple du corps moyen des 20 bougies (0 = aucune exigence)
+  zoneMinAtrH: 0,       // taille de la POI HTF au moins ce multiple de l'ATR HTF (0 = aucun minimum)
+  zoneMaxAtrH: 0,       // ... et au plus (0 = aucun maximum) : écarte les zones démesurées
+  unSeulRetour: false,  // la POI est consommée après son premier retour : sans MSS dans la fenêtre, on n'y revient plus
   htf: 240,             // unité de temps du FVG, en minutes : 60 (H1), 240 (H4) ou 1440 (D1)
   ageMax: 60,           // le FVG HTF reste valable 60 bougies HTF
   zoneMinAtr: 0,        // taille minimale du FVG HTF en ATR M15 (0 = pas de minimum)
@@ -70,13 +74,15 @@ function poiHtf(H, htfMs, P) {
   const ema = new Array(H.length).fill(NaN);
   if (P.biaisEma) { const a = 2 / (P.biaisEma + 1); let e = H.length ? H[0].c : 0; for (let i = 0; i < H.length; i++) { e += a * (H[i].c - e); ema[i] = e; } }
   const corpsMoy = function (i) { let s = 0, n = 0; for (let q = Math.max(0, i - 20); q < i; q++) { s += Math.abs(H[q].c - H[q].o); n++; } return n ? s / n : 0; };
+  const atrH = atrSerie(H, 14);
   for (let i = 2; i < H.length; i++) {
+    const taille = function (z) { return (!P.zoneMinAtrH || z >= P.zoneMinAtrH * atrH[i]) && (!P.zoneMaxAtrH || z <= P.zoneMaxAtrH * atrH[i]); };
     const biaisOk = !P.biaisEma || H[i].c > ema[i];
     if (!biaisOk) continue;
-    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false });
+    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false });
     // OB : dernière bougie baissière avant une bougie haussière qui clôture au-dessus de son plus haut (déplacement)
     const j = i - 1;
-    if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i))
+    if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i) && taille(H[j].h - H[j].l))
       zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, touche: -1, utilise: false });
   }
   return zs;
@@ -147,7 +153,7 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
     while (prochaine < zs.length && zs[prochaine].dispo <= t) { actives.push(zs[prochaine]); prochaine++; }
     const atr = atrs[k];
     // vie des zones : invalidée par une clôture sous son bas, ou trop vieille
-    actives = actives.filter(function (z) { return !z.utilise && bs[k].c >= z.bas && t - z.dispo <= P.ageMax * htfMs; });
+    actives = actives.filter(function (z) { return !z.utilise && !(P.unSeulRetour && z.touche >= 0 && k - z.touche > P.fenetreMss + 8) && bs[k].c >= z.bas && t - z.dispo <= P.ageMax * htfMs; });
     if (!Number.isFinite(atr) || t < libre || t < depuis || bs[k].t > jusqua) {
       for (const z of actives) if (z.touche < 0 && bs[k].t >= z.dispo - 15 * 60000 && bs[k].l <= z.haut) z.touche = k;
       continue;
@@ -214,6 +220,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
     trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'HTF FVG + MSS M15 (' + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
+      mss: { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
       zoneHtf: { genre: s.zone.genre, bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
       f: { risqueAtr: +((entree - s.stop) / s.atr).toFixed(2), rrTp1: +((s.tp1 - entree) / (entree - s.stop)).toFixed(2) } }, issue));
     libre = (issue.tFin || s.t) + 1;
