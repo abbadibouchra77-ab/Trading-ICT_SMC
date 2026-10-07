@@ -15,7 +15,7 @@ const DUREES = { M15: M15, H1: 3600000, H4: 4 * 3600000, D1: 86400000, W1: 7 * 8
 
 // Pré-filtre rapide : il ne garde que les bougies où le moteur PEUT trouver un setup.
 // Condition nécessaire du moteur : une mèche M15 dans les 48 dernières bougies qui est l'extrême
-// des 40 bougies précédentes (le « vrai » balayage), et (hors cryptos) l'heure dans une killzone.
+// des 8 bougies précédentes au moins (la réaction M15, réglage reactionMin), et (hors cryptos) l'heure dans une killzone.
 // tests/test_backtest.js vérifie que ce filtre ne change aucune décision.
 function preFiltre(bs, n, atr, crypto, maintenant) {
   if (!crypto) {
@@ -23,9 +23,10 @@ function preFiltre(bs, n, atr, crypto, maintenant) {
     if (!moteur.REGLAGES.killzones.some(function (k) { return h >= k.debut && h < k.fin; })) return false;
   }
   const tol = 0.1 * atr;
-  for (let i = Math.max(41, n - 48); i < n; i++) {
+  const N = moteur.REGLAGES.reactionMin;
+  for (let i = Math.max(N + 1, n - 48); i < n; i++) {
     let mn = Infinity, mx = -Infinity;
-    for (let q = i - 40; q < i; q++) { if (bs[q].low < mn) mn = bs[q].low; if (bs[q].high > mx) mx = bs[q].high; }
+    for (let q = i - N; q < i; q++) { if (bs[q].low < mn) mn = bs[q].low; if (bs[q].high > mx) mx = bs[q].high; }
     // la mèche d'un balayage peut s'étendre sur 4 bougies (liquidity grab)
     let lo = Infinity, hi = -Infinity;
     for (let q = i; q < Math.min(n, i + 4); q++) { if (bs[q].low < lo) lo = bs[q].low; if (bs[q].high > hi) hi = bs[q].high; }

@@ -17,8 +17,8 @@ function histoireAchat(o) {
   const P0 = g.p + 50; g.vers(P0, 288, 0.8);
   g.vers(P0 - 60, 192, 0.8).vers(P0 - 38, 96, 0.8).vers(P0 - 59, 96, 0.8).vers(P0 - 35, 96, 0.8).vers(P0 - 64, 40, 0.8);
   g.ajoute(g.p, g.p + 0.5, P0 - 70, P0 - 63, 600);          // point A : balayage H4
-  g.vers(P0 + 45, 240, 0.8);                                 // impulsion -> point B
-  g.vers(P0 + 10, 96, 0.6).vers(P0 + 15, 24, 0.6).vers(P0 - 14, 48, 0.6);
+  g.vers(P0 + 45, 120, 0.8);                                 // impulsion (déplacement) -> point B
+  g.vers(P0 + 10, 96, 0.6).vers(P0 + 15, 24, 0.6).vers(P0 - 14, 120, 0.6); // retracement lent (correction, pas un déplacement)
   const hB = o.heureBalayage === undefined ? 6 : o.heureBalayage; // 06h UTC = 02h New York (été)
   g.jusquA((hB + 24 - 6) % 24, 0.4);                         // calme jusqu'à 6 h avant le balayage
   // range (Asie si balayage à 6 h UTC) avec creux égaux à P0-20

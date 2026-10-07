@@ -28,6 +28,7 @@ const REGLAGES = {
   mssPivot: 3,             // le MSS casse un vrai sommet M15 (pivot de 3 bougies de chaque côté), pas une petite bosse
   stopMinAtrH1: 1.0,       // le stop est au moins à 1 ATR H1 de l'entrée : jamais collé à l'entrée
   rangeH1: { bougies: 24, largeurAtr: 3, efficacite: 0.3 }, // H1 en range : 24 bougies dans 3 ATR, sans direction
+  reactionMin: 8,          // la réaction M15 est le plus bas (haut) d'au moins 8 bougies
   fenetreBalayageM15: 48,  // balayage M15 cherché sur les 12 dernières heures
   fenetreLegH4: 60,        // point B H4 cherché sur les 60 dernières bougies H4 (H1 : 80)
   dureeOrdreCrypto: 3,     // cryptos : l'ordre limite expire au bout de 3 h
@@ -149,32 +150,44 @@ function structure(bs, L) {
   }
   return { pivots: piv, evts: evts, tendance: tendance };
 }
-// Structure de swing (pour le H4) : après une cassure haussière, la direction reste haussière tant que le
-// creux d'où est parti le mouvement (le « strong low ») n'est pas cassé en clôture ; les petits creux internes
-// d'un retracement ne changent pas la direction. Symétrique à la baisse.
-function directionSwing(bs, L) {
-  const piv = pivots(bs, L);
-  let dir = 0, sh = null, sl = null, k = 0, fort = null, dernier = null;
+// Direction : la dernière cassure de structure (BOS / CHoCH) faite AVEC DÉPLACEMENT.
+// Un vrai changement de direction casse la structure par une grande bougie (corps ≥ 1,5 x la moyenne
+// des 20 précédentes), dans les 2 bougies avant la cassure ou la suivante. Un retracement qui descend en petites bougies vers l'OTE ne change pas la direction.
+// Structure de swing : un creux de swing = le plus bas ENTRE deux sommets (même si une mèche d'impulsion
+// est plus basse à côté), un sommet de swing = le plus haut entre deux creux. Il est connu quand le
+// second sommet (ou creux) est confirmé. Cassure en clôture = BOS (dans la tendance) ou CHoCH.
+function structureSwing(bs) {
+  const piv = pivots(bs, 1), sw = [];
+  const H = piv.filter(function (p) { return p.type === 'H'; }), Lw = piv.filter(function (p) { return p.type === 'L'; });
+  for (let k = 1; k < H.length; k++) {
+    let m = Infinity, im = -1; for (let q = H[k - 1].i; q <= H[k].i; q++) if (bs[q].l < m) { m = bs[q].l; im = q; }
+    sw.push({ type: 'L', p: m, i: im, conf: H[k].i + 1 });
+  }
+  for (let k = 1; k < Lw.length; k++) {
+    let m = -Infinity, im = -1; for (let q = Lw[k - 1].i; q <= Lw[k].i; q++) if (bs[q].h > m) { m = bs[q].h; im = q; }
+    sw.push({ type: 'H', p: m, i: im, conf: Lw[k].i + 1 });
+  }
+  sw.sort(function (a, b) { return a.conf - b.conf; });
+  const evts = []; let tendance = 0, sh = null, sl = null, k = 0;
   for (let i = 0; i < bs.length; i++) {
-    while (k < piv.length && piv[k].i + L <= i) { if (piv[k].type === 'H') sh = piv[k]; else sl = piv[k]; k++; }
+    while (k < sw.length && sw[k].conf <= i) { if (sw[k].type === 'H') sh = sw[k]; else sl = sw[k]; k++; }
     const c = bs[i].c;
-    if (dir >= 0 && sh && c > sh.p) { // cassure haussière : le strong low = plus bas entre le sommet cassé et la cassure
-      let mn = Infinity; for (let q = sh.i; q <= i; q++) mn = Math.min(mn, bs[q].l);
-      dernier = { i: i, dir: 1, type: dir === 1 ? 'BOS' : 'CHoCH', niveau: sh.p }; dir = 1; fort = mn; sh = null; continue;
-    }
-    if (dir <= 0 && sl && c < sl.p) {
-      let mx = -Infinity; for (let q = sl.i; q <= i; q++) mx = Math.max(mx, bs[q].h);
-      dernier = { i: i, dir: -1, type: dir === -1 ? 'BOS' : 'CHoCH', niveau: sl.p }; dir = -1; fort = mx; sl = null; continue;
-    }
-    if (dir === 1 && c < fort) { // le strong low est cassé : changement de direction
-      let mx = -Infinity; for (let q = Math.max(0, i - 60); q <= i; q++) mx = Math.max(mx, bs[q].h);
-      dernier = { i: i, dir: -1, type: 'CHoCH', niveau: fort }; dir = -1; fort = mx; sl = null;
-    } else if (dir === -1 && c > fort) {
-      let mn = Infinity; for (let q = Math.max(0, i - 60); q <= i; q++) mn = Math.min(mn, bs[q].l);
-      dernier = { i: i, dir: 1, type: 'CHoCH', niveau: fort }; dir = 1; fort = mn; sh = null;
+    if (sh && c > sh.p && sh.i < i) { evts.push({ i: i, dir: 1, type: tendance === -1 ? 'CHoCH' : 'BOS', niveau: sh.p, iNiveau: sh.i }); tendance = 1; sh = null; }
+    else if (sl && c < sl.p && sl.i < i) { evts.push({ i: i, dir: -1, type: tendance === 1 ? 'CHoCH' : 'BOS', niveau: sl.p, iNiveau: sl.i }); tendance = -1; sl = null; }
+  }
+  return { evts: evts, tendance: tendance };
+}
+function directionDeplacement(bs) {
+  const st = structureSwing(bs);
+  for (let k = st.evts.length - 1; k >= 0; k--) {
+    const e = st.evts[k];
+    const cm = moyenne(bs.slice(Math.max(0, e.i - 22), Math.max(1, e.i - 2)).map(corps));
+    for (let q = Math.max(2, e.i - 2); q <= Math.min(bs.length - 1, e.i + 1); q++) {
+      const b = bs[q];
+      if ((e.dir === 1 ? b.c > b.o : b.c < b.o) && corps(b) >= 1.5 * cm) return e;
     }
   }
-  return dernier;
+  return null;
 }
 // Lecture d'une unité de temps : tendance (plus hauts / plus bas + dernière cassure) et range.
 function lireUT(bs, L, nRange) {
@@ -595,17 +608,20 @@ function analyserCote(d, dc, S, ctx, R) {
   // a) Tendance : jambe A -> B qui casse la structure, puis retour en décote
   function contexteTendance(c) {
     const bs = c.bs, n = bs.length, atr = c.atr;
-    let iB = -1, B = -Infinity;
-    for (let i = Math.max(0, n - c.fenetreLeg); i < n; i++) if (bs[i].h >= B) { B = bs[i].h; iB = i; }
+    // La jambe = le mouvement qui a fait la dernière cassure de structure avec déplacement :
+    // A = son origine (le plus bas entre le sommet cassé et la cassure), B = le plus haut atteint depuis.
+    const e = directionDeplacement(bs);
+    if (!e || e.dir !== 1) return { echec: 'pas de cassure de structure ' + mot.haussiere + ' avec déplacement' };
     let iA = -1, A = Infinity;
-    for (let i = Math.max(0, iB - 80); i < iB; i++) if (bs[i].l < A) { A = bs[i].l; iA = i; }
-    if (iA < 0 || iB - iA < 3 || B - A < 2 * atr) return { echec: 'pas de jambe ' + mot.haussiere + ' nette' };
-    const st = structure(bs, 2);
-    const evts = st.evts.filter(function (e) { return e.dir === 1 && e.i > iA && e.i <= iB + 1; });
-    if (!evts.length) return { echec: 'la jambe n\'a cassé aucune structure (ni BOS ni CHoCH)' };
+    for (let i = e.iNiveau; i <= e.i; i++) if (bs[i].l < A) { A = bs[i].l; iA = i; }
+    let iB = -1, B = -Infinity;
+    for (let i = e.i; i < n; i++) if (bs[i].h >= B) { B = bs[i].h; iB = i; }
+    if (iA < 0 || B - A < 1.5 * atr) return { echec: 'jambe ' + mot.haussiere + ' trop petite' };
+    const evts = [e];
     for (let i = iB + 1; i < n; i++) if (bs[i].c < A) return { echec: 'clôture sous le point A' };
     const finMouvement = niveaux.filter(function (nv) {
-      if (nv.cote !== 'H' || nv.t0 > bs[iB].t || !(nv.ut === 'W1' || nv.ut === 'MN' || nv.ut === 'D1' || /égaux|résistance|range/.test(nv.genre))) return false;
+      // seule une liquidité majeure (Daily et plus, ou EQH / résistance / range H4) termine le mouvement
+      if (nv.cote !== 'H' || nv.t0 > bs[iB].t || !(nv.ut === 'W1' || nv.ut === 'MN' || nv.ut === 'D1' || (nv.ut === 'H4' && /égaux|résistance|range/.test(nv.genre)))) return false;
       const p = prixNiveau(nv, bs[iB].t);
       return bs[iB].h > p && (bs[iB].c < p || (iB + 1 < n && bs[iB + 1].c < p));
     });
@@ -614,7 +630,7 @@ function analyserCote(d, dc, S, ctx, R) {
       .filter(function (s) { return s.i >= iA - 1 && s.i <= iA + 1; }))[0] || null;
     const conf = ['structure ' + c.ut + ' cassée (' + evts[evts.length - 1].type + ')'];
     if (iA >= 12) { let hi = -Infinity, lo = Infinity; for (let q = iA - 12; q < iA; q++) { hi = Math.max(hi, bs[q].h); lo = Math.min(lo, bs[q].l); } if (hi - lo <= 4 * atr && balA) conf.push('AMD ' + c.ut + ' au point A'); }
-    return { type: 'tendance', ut: c.ut, A: A, B: B, zoneBas: A - 1.0 * atr, zoneHaut: A + 0.5 * (B - A), invalidation: A,
+    return { type: 'tendance', ut: c.ut, A: A, B: B, tB: bs[iB].t, zoneBas: A - 1.0 * atr, zoneHaut: A + 0.5 * (B - A), invalidation: A,
       liquidite: balA ? balA.niveaux.map(function (x) { return x.genre; }) : [], conf: conf, cle: c.ut + '|tendance|' + bs[iA].t,
       recit: 'tendance ' + c.ut + ' : jambe ' + mot.haussiere + ' de ' + P(A) + ' à ' + P(B) + ' (' + uniques(evts.map(function (e) { return e.type; })).join(', ') + ')' +
         (balA ? ', le point A a balayé ' + balA.niveaux.slice(0, 3).map(function (x) { return x.genre; }).join(' + ') : '') };
@@ -638,8 +654,8 @@ function analyserCote(d, dc, S, ctx, R) {
       if (mort) continue;
       const zi = zonesSous(meche, 0.2 * atr, bs[rg.debut].t, c.zonesUT);
       if (!zi.length) continue; // la manipulation doit se faire dans une zone d'intérêt (formée avant le range)
-      let B = -Infinity; for (let q = j; q < n; q++) B = Math.max(B, bs[q].h);
-      return { type: 'AMD', ut: c.ut, A: meche, B: B, zoneBas: meche - 0.3 * atr, zoneHaut: Math.max(rg.haut, meche + 0.5 * (B - meche)), invalidation: meche,
+      let B = -Infinity, iB = j; for (let q = j; q < n; q++) if (bs[q].h >= B) { B = bs[q].h; iB = q; }
+      return { type: 'AMD', ut: c.ut, A: meche, B: B, tB: bs[iB].t, zoneBas: meche - 0.3 * atr, zoneHaut: Math.max(rg.haut, meche + 0.5 * (B - meche)), invalidation: meche,
         liquidite: ['bas de range ' + c.ut], conf: ['AMD ' + c.ut + ' dans ' + nomsZ(zi)], cle: c.ut + '|AMD|' + bs[j].t,
         recit: 'AMD ' + c.ut + ' : range ' + P(rg.bas) + ' - ' + P(rg.haut) + ', mèche qui liquide le bas du range à ' + P(meche) + ' dans ' + nomsZ(zi) + ', puis déplacement ' + mot.haussier };
     }
@@ -664,21 +680,20 @@ function analyserCote(d, dc, S, ctx, R) {
       if (niv === null) continue;
       let mort = false; for (let q = j + 1; q < n; q++) if (bs[q].c < niv - 0.5 * atr) { mort = true; break; } // retour dans le range : fausse cassure
       if (mort) continue;
-      let B = -Infinity; for (let q = j; q < n; q++) B = Math.max(B, bs[q].h);
-      return { type: 'cassure', ut: c.ut, A: bas, B: B, zoneBas: niv - 0.5 * atr, zoneHaut: niv + 0.5 * (B - niv), invalidation: bas, diagonal: /diagonal/.test(genre),
+      let B = -Infinity, iB = j; for (let q = j; q < n; q++) if (bs[q].h >= B) { B = bs[q].h; iB = q; }
+      return { type: 'cassure', ut: c.ut, A: bas, B: B, tB: bs[iB].t, zoneBas: niv - 0.5 * atr, zoneHaut: niv + 0.5 * (B - niv), invalidation: bas, diagonal: /diagonal/.test(genre),
         liquidite: ['liquidité au-dessus du ' + genre + ' ' + c.ut], conf: ['cassure ' + genre + ' ' + c.ut + ' par déplacement'], cle: c.ut + '|cassure|' + bs[j].t,
         recit: 'cassure ' + c.ut + ' du ' + genre + ' à ' + P(niv) + ' par une bougie de déplacement qui clôture dehors' };
     }
     return null;
   }
 
-  // Direction : la dernière cassure de structure (BOS / CHoCH). On ne trade que dans ce sens.
-  //  - H4 : structure de swing (le retracement vers l'OTE ne change pas la direction tant que le strong low tient) ;
-  //  - H1 : la dernière cassure, même interne (un CHoCH vendeur H1 interdit d'acheter jusqu'à une nouvelle cassure acheteuse).
+  // Direction : la dernière cassure de structure AVEC DÉPLACEMENT, en H4 et en H1. On ne trade que dans ce sens.
+  // Un retracement en petites bougies vers l'OTE ne change pas la direction ; un CHoCH vendeur avec déplacement, si.
   // Après un BOS / CHoCH vendeur, le bot n'achète pas : il attend une nouvelle cassure acheteuse
   // (et la lecture du miroir cherche, elle, la vente dans le sens de cette cassure).
-  const e4 = directionSwing(H4, 2), e1 = structure(H1, 2).evts.slice(-1)[0] || null;
-  function cassureTxt(e, ut) { return e ? e.type + ' ' + (e.dir === 1 ? mot.haussier : mot.baissier) + ' ' + ut + ' (' + P(e.niveau) + ')' : 'aucune cassure ' + ut; }
+  const e4 = directionDeplacement(H4), e1 = directionDeplacement(H1);
+  function cassureTxt(e, ut) { return e ? e.type + ' ' + (e.dir === 1 ? mot.haussier : mot.baissier) + ' ' + ut + ' avec déplacement (' + P(e.niveau) + ')' : 'aucune cassure ' + ut + ' avec déplacement'; }
   histoire.push('Dernière cassure de structure : ' + cassureTxt(e4, 'H4') + ' ; ' + cassureTxt(e1, 'H1') + '.');
   if (e4 && e4.dir === -1) { raisons.push('Dernière cassure de structure H4 : ' + cassureTxt(e4, 'H4') + ' : pas de ' + mot.achat + '.'); return res; }
   if (e1 && e1.dir === -1) { raisons.push('Dernière cassure de structure H1 : ' + cassureTxt(e1, 'H1') + ' : on attend une cassure ' + mot.haussiere + ' H1.'); return res; }
@@ -712,11 +727,14 @@ function analyserCote(d, dc, S, ctx, R) {
     // clé d'un trade = contexte # réaction M15 : on ne retrade ni le même contexte, ni la même réaction M15
     const deja = ctx.legsDejaTradees.map(function (x) { return String(x).split('#'); });
     if (deja.some(function (x) { return x[0] === k.cle + '|' + res.sens; })) return stop('ce mouvement a déjà été tradé.');
-    // le creux de réaction M15 : extrême des 40 bougies précédentes, dans la zone du contexte, jamais repris
+    // le creux de réaction M15 : le plus bas du retracement depuis le point B (au moins 8 bougies, au plus 40),
+    // dans la zone du contexte, jamais repris ensuite
     let iA = -1;
-    for (let i = n15 - 1; i >= Math.max(41, n15 - R.fenetreBalayageM15); i--) {
+    // la bougie M15 du point B (dans la bougie du contexte qui l'a fait)
+    let iB15 = n15; for (let q = n15 - 1; q >= 0 && M15[q].t >= k.tB; q--) if (M15[q].h >= k.B - 1e-9) iB15 = q;
+    for (let i = n15 - 1; i >= Math.max(R.reactionMin + 1, n15 - R.fenetreBalayageM15); i--) {
       const lo = M15[i].l;
-      if (lo < k.zoneBas || lo > k.zoneHaut || !estExtreme(M15, i, lo, 40, 0.1 * atr15)) continue;
+      if (lo < k.zoneBas || lo > k.zoneHaut || !estExtreme(M15, i, lo, Math.max(R.reactionMin, Math.min(40, i - iB15)), 0.1 * atr15)) continue;
       let repris = false; for (let q = i + 1; q < n15; q++) if (M15[q].l < lo) { repris = true; break; }
       if (!repris) iA = i;
       break;
