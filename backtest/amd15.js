@@ -49,6 +49,7 @@ const DEFAUT = {
   objectif: 'R',                    // 'R' = TP à rr1 / rr2 R ; 'range' = liquidité en face / projection du range
   rrMin: 1.5,                       // objectif 'range' : au moins 1,5 R
   spreadFacteur: 1,                // 0 = sans spread (diagnostic)
+  annulerSiCible: true,             // un ordre limite est annulé si le prix touche la cible (ou le stop) avant d'être rempli
   sessions: null                    // ex. [[7, 17]] : heures UTC autorisées pour le signal (null = 24 h / 24)
 };
 
@@ -212,6 +213,17 @@ function contexteOk(cx, s, P) {
   return true;
 }
 
+// Un ordre limite non rempli quand le prix atteint la cible ou le stop est caduc (le mouvement est parti sans nous).
+function ordreCaduc(M15, k0, sig, nBougies) {
+  const dir = sig.sens === 'buy' ? 1 : -1;
+  for (let i = k0; i < Math.min(M15.length, k0 + nBougies); i++) {
+    const b = M15[i];
+    if (dir > 0 ? b.low <= sig.entree : b.high >= sig.entree) return false;
+    if (dir > 0 ? (b.high >= sig.tp1 || b.low <= sig.stop) : (b.low <= sig.tp1 || b.high >= sig.stop)) return true;
+  }
+  return false;
+}
+
 function miroir(bs) { return bs.map(function (b) { return { t: b.t, o: -b.o, h: -b.l, l: -b.h, c: -b.c, v: b.v }; }); }
 
 function backtesterActif(actif, M15, P, depuis, jusqua) {
@@ -249,6 +261,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     const S = trouve.S, nv = trouve.nv;
     const sig = { sens: S > 0 ? 'buy' : 'sell', entree: S * nv.entree, stop: S * nv.stop, tp1: S * nv.tp1, tp2: nv.tp2 === null ? null : S * nv.tp2,
       expireA: new Date(t + P.dureeOrdre * 15 * 60000).toISOString() };
+    if (P.annulerSiCible && ordreCaduc(M15, k + 1, sig, P.dureeOrdre)) { continue; }
     const issue = suivreTrade(M15, k + 1, sig, actif.spread * P.spreadFacteur, regl);
     trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'AMD ' + trouve.s.cas + ' ' + ({ 15: 'M15', 30: 'M30', 60: 'H1' }[P.ut] || P.ut + 'min'), grade: 'AMD', entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2,
       typeEntree: nv.type, range: { debut: bs[trouve.s.rg.debut].t, haut: S > 0 ? trouve.s.rg.haut : -trouve.s.rg.bas, bas: S > 0 ? trouve.s.rg.bas : -trouve.s.rg.haut, bougies: trouve.s.rg.bougies },
