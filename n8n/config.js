@@ -15,7 +15,7 @@ return [{ json: {
   ],
   risqueAuDela: 1,       // 100 000 et plus : 1 %
   rrMin: 2,              // objectif minimum : 2R
-  strategie: 'AMD',      // stratégie du moteur : 'AMD' (seule active) ou 'lecture' (ancienne lecture par scénarios)
+  strategie: 'lecture',  // stratégie du moteur : 'lecture' (lecture ICT / SMC complète, active) ou 'AMD' (AMD seule)
   maxPertesJour: 2,      // au plus 2 pertes par jour (jour de Paris)
   maxPositionsBot: 3,    // sécurité : au plus 3 trades SMC Vision ouverts en même temps
   commentaire: 'SMC-Vision',

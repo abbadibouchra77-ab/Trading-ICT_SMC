@@ -22,7 +22,7 @@
 
 // ------------------------------- Réglages -------------------------------------------
 const REGLAGES = {
-  strategie: 'AMD',        // stratégie active : 'AMD' (seule, demande du 08/10/2026) ; 'lecture' = l'ancienne lecture par scénarios
+  strategie: 'lecture',    // 'lecture' = lecture ICT / SMC complète (active, demande du 08/10/2026 : Claude contrôle et décide) ; 'AMD' = AMD seule
   rrMin: 2,                // TP1 à au moins 2R
   margeStopAtr: 0.15,      // stop au-delà du point A, avec une marge de 0,15 ATR (UT du contexte)
   porteeTP: 1.5,           // TP1 à portée : pas plus loin que 1,5 fois la jambe depuis l'entrée
@@ -809,6 +809,11 @@ function analyserCote(d, dc, S, ctx, R) {
     if (dc && smt(M15, dc.M15, n15 - 1, 40)) pts(2, 'SMT : ' + ctx.correle + ' n\'a pas fait de ' + mot.bas);
     if ((tp1.p - entree) / risque >= 3) pts(1, 'TP1 à 3R ou plus');
     if (biais === 'aligné') pts(1, 'dans le sens du Monthly / Weekly / Daily');
+    // RSI : divergence au point A / au retour, et cassure de la zone 50 dans le sens du trade
+    if (divergence(M15, rsi15, 2, 60, n15 - 1) >= 1) pts(1, 'divergence RSI M15');
+    if (divergence(H1, rsi1, 2, 60, n1 - 1) >= 1) pts(1, 'divergence RSI H1');
+    if (rsiSortieZoneNeutre(rsi15, n15, 12)) pts(1, 'RSI M15 casse la zone 50 dans le sens du trade');
+    if (rsiSortieZoneNeutre(rsi1, n1, 8)) pts(1, 'RSI H1 casse la zone 50 dans le sens du trade');
     // A+++ : tendance H4 + liquidité prise au point A + entrée dans l'OTE + dans une zone d'intérêt
     const grade = (k.type === 'tendance' && k.ut === 'H4' && ote && (zoneE || zR.length)) ? 'A+++' : 'A++';
     r.ok = true; r.note = note; r.grade = grade; r.contexte = k;
