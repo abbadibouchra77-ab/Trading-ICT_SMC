@@ -48,6 +48,12 @@ const DEFAUT = {
   annulerSiCible: true, // un ordre limite est ANNULÉ si le prix touche la cible (ou le stop) avant d'être rempli
   legPivot: 2,          // mode 'ote2' : un sommet est confirmé quand il est le plus haut des 2 bougies de chaque côté
   fenetreOte2: 600,     // mode 'ote2' : une POI sert pendant 600 bougies M15 après son MSS
+  ctx: 'poi',           // mode 'swing' : contexte HTF : 'poi' (l'origine de la jambe est dans une POI H4 / FVG en direct), 'ema' (clôture H4 du bon côté de l'EMA) ou 'none'
+  tpMode: 'premiere',   // mode 'swing' : 'premiere' (1re liquidité, refus si RR < rrMin) ou 'suffisante' (1re liquidité qui offre au moins rrMin R)
+  ctxDuree: 600,        // mode 'swing' : une jambe validée par la POI garde le contexte pendant 600 bougies tant que son origine n'est pas reprise
+  ctxTol: 0.3,          // mode 'swing' : tolérance (en ATR M15) autour de la POI pour l'origine de la jambe
+  expireBougies: 300,   // mode 'swing' : l'ordre limite attend 300 bougies M15 (comptées en bougies : le week-end ne compte pas)
+  tpDyn: true,          // mode 'swing' : la cible (1re liquidité non prise) est calculée AU REMPLISSAGE ; l'ordre n'est annulé que si le stop est touché avant
   mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
   sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
   sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
@@ -76,6 +82,10 @@ const DEFAUT = {
   spreadFacteur: 1,
   sessions: null        // ex. [[7, 17]] : heures UTC autorisées pour le MSS
 };
+
+// Traceur de débogage : DBG_DE / DBG_A (ISO UTC) bornent la période affichée ; les lignes sont envoyées sur stderr
+const DBG_DE = process.env.DBG_DE ? Date.parse(process.env.DBG_DE + 'Z') : null, DBG_A = process.env.DBG_A ? Date.parse(process.env.DBG_A + 'Z') : null;
+function dbg(t, ...a) { if (DBG_DE !== null && t >= DBG_DE && t <= DBG_A) console.error(new Date(t).toISOString().slice(5, 16), ...a); }
 
 function atrSerie(bs, n) {
   const out = new Array(bs.length).fill(NaN); let s = 0;
@@ -411,6 +421,18 @@ function setupsOte(bs, H, atrs, P, depuis, jusqua) {
   return out;
 }
 
+// Série « tendance H4 » alignée sur les bougies M15 du graphique g : +1 si la dernière clôture H4 est au-dessus de son EMA (pour un graphique retourné, le signe suit)
+function emaSerieH(g, P) {
+  const out = new Array(g.length).fill(0), ms = P.htf * 60000, a = 2 / ((P.biaisEma || 50) + 1);
+  let cle = -1, cl = null, ema = null, sens = 0;
+  for (let k = 0; k < g.length; k++) {
+    const c = Math.floor(g[k].t / ms);
+    if (c !== cle) { if (cl !== null) { ema = ema === null ? cl : ema + a * (cl - ema); sens = cl > ema ? 1 : -1; } cle = c; }
+    cl = g[k].c; out[k] = sens;
+  }
+  return out;
+}
+
 // Un ordre limite qui n'a pas été rempli quand le prix atteint la cible (ou le stop) est caduc : le mouvement est parti sans nous.
 // Renvoie true si l'ordre doit être annulé. dir = +1 achat, -1 vente (prix réels, ordre placé à la clôture de la bougie k0 - 1).
 function ordreCaduc(M15, k0, sig, dirSens, nBougies) {
@@ -445,7 +467,7 @@ function setupsOte2(bs, H, atrs, P, depuis, jusqua) {
       const g = z.leg2;
       if (!g) {                                                    // POI touchée : on attend le MSS
         const m = chercherMss(bs, k, z, Object.assign({}, P, { fenetreMss: P.fenetreJambe }));
-        if (m) z.leg2 = { iBas0: m.iBas, k0: k, debut: m.iBas };
+        if (m) { z.leg2 = { iBas0: m.iBas, k0: k, debut: m.iBas }; dbg(bs[k].t, 'MSS  zone', (z.live ? 'live ' : '') + z.bas.toFixed(1) + '/' + (z.haut === Infinity ? '?' : z.haut.toFixed(1)), 'niveau cassé', m.niveau.toFixed(1), 'origine', bs[m.iBas].l.toFixed(1)); }
         continue;
       }
       if (bs[k].l < bs[g.iBas0].l || k - g.k0 > P.fenetreOte2) { z.utilise = true; continue; }   // structure cassée, ou trop vieux
@@ -454,8 +476,10 @@ function setupsOte2(bs, H, atrs, P, depuis, jusqua) {
       let iA = g.debut; for (let q = g.debut; q <= p; q++) if (bs[q].l < bs[iA].l) iA = q;     // creux de la jambe
       const B = bs[p].h;
       g.debut = p;                                                 // la jambe suivante part de ce sommet
+      dbg(bs[k].t, 'jambe origine', bs[iA].l.toFixed(1), 'sommet', B.toFixed(1), 'taille', ((B - bs[iA].l) / atr).toFixed(1) + ' ATR');
       if (B - bs[iA].l < P.jambeMinAtr * atr) continue;
       const o = ordreOte(bs, iA, k, B, P, atr);
+      dbg(bs[k].t, '  -> ordre', o ? o.e.toFixed(1) + (o.ob ? ' OB' : ' FVG') : 'aucune zone dans la bande');
       if (!o) continue;
       const stop = bs[iA].l - P.margeStop * atr, risque = o.e - stop;
       if (!(risque >= P.stopMinAtr * atr)) continue;
@@ -470,16 +494,67 @@ function setupsOte2(bs, H, atrs, P, depuis, jusqua) {
   return out;
 }
 
+// Mode « swing » : structure M15 indépendante de la POI. À chaque sommet pivot confirmé (graphique « achat », retourné pour les ventes),
+// la jambe = du creux le plus bas depuis le sommet précédent jusqu'à ce sommet. Elle est valide si elle casse la structure (nouveau sommet
+// plus haut que le précédent), si elle a une taille suffisante et si son origine est dans une POI H4 (contexte). Zone d'entrée : FVG / OB de la
+// jambe dont le 50 % est dans la bande OTE 50-78 % ; ordre limite, stop sous l'origine de la jambe, cible = première liquidité.
+function setupsSwing(bs, H, atrs, P, depuis, jusqua, ema) {
+  const htfMs = P.htf * 60000, zs = P.ctx === 'poi' ? poiHtf(H, htfMs, P) : [], veille = plusHautsVeille(bs), out = [], L = P.legPivot, groupe = {};
+  let prochaine = 0, actives = [], debut = 0, dernierSommet = -Infinity, vivant = null;
+  for (let k = 60; k < bs.length - 1; k++) {
+    const t = bs[k].t + 15 * 60000, atr = atrs[k];
+    if (vivant && (bs[k].l < vivant.bas || k - vivant.k > P.ctxDuree)) vivant = null;   // l'origine du mouvement est reprise : le contexte tombe
+    while (prochaine < zs.length && zs[prochaine].dispo <= t) { actives.push(zs[prochaine]); prochaine++; }
+    for (const z of actives) if (z.live && bs[k].t < z.fin) z.haut = Math.min(z.haut, bs[k].l);
+    actives = actives.filter(function (z) { return !z.utilise && bs[k].c >= z.bas && t - z.dispo <= P.ageMax * htfMs && !(z.haut <= z.bas); });
+    const p = k - L;
+    if (p <= debut || !pivotHaut(bs, p, L)) continue;                  // sommet pivot confirmé à la clôture de k
+    const B = bs[p].h; let iA = debut; for (let q = debut; q <= p; q++) if (bs[q].l < bs[iA].l) iA = q;
+    const cassure = B > dernierSommet;                                  // nouveau sommet plus haut : la structure est cassée
+    debut = p; if (B > dernierSommet || true) dernierSommet = B;
+    const actif = Number.isFinite(atr) && t >= depuis && bs[k].t <= jusqua;
+    if (!actif) continue;
+    dbg(bs[k].t, 'jambe', 'origine', bs[iA].l.toFixed(1), 'sommet', B.toFixed(1), 'taille', ((B - bs[iA].l) / atr).toFixed(1), cassure ? 'CASSE' : 'pas de cassure');
+    if (!cassure || B - bs[iA].l < P.jambeMinAtr * atr) continue;
+    let ctxOk = P.ctx === 'none';
+    if (P.ctx === 'poi') {
+      ctxOk = actives.some(function (z) { return z.dispo <= bs[iA].t + 15 * 60000 && bs[iA].l >= z.bas - P.ctxTol * atr && bs[iA].l <= z.haut + P.ctxTol * atr; });
+      if (ctxOk) vivant = { bas: bs[iA].l, k: k };                // validé par la POI : les jambes suivantes (BOS) restent valides
+      else if (vivant && bs[iA].l >= vivant.bas) ctxOk = true;
+    } else if (P.ctx === 'ema') ctxOk = ema[k] > 0;
+    dbg(bs[k].t, '  contexte', ctxOk ? 'OK' : 'refusé (origine hors POI)');
+    if (!ctxOk) continue;
+    const o = ordreOte(bs, iA, k, B, P, atr);
+    dbg(bs[k].t, '  ordre', o ? o.e.toFixed(1) + (o.ob ? ' OB' : ' FVG') : 'aucune zone dans la bande OTE');
+    if (!o) continue;
+    const stop = bs[iA].l - P.margeStop * atr, risque = o.e - stop;
+    if (!(risque >= P.stopMinAtr * atr)) continue;
+    if (P.tpDyn) {
+      out.push({ k: k, t: t, groupe: groupe, entree: o.e, stop: stop, tp1: null, tp2: null, tpDyn: true, type: (o.ob ? 'OB' : 'FVG') + ' OTE (swing)', atr: atr, zone: { genre: 'swing', bas: bs[iA].l, haut: B, dispo: bs[iA].t },
+        mss: null, lect: null, expireBars: P.expireBougies, ote: { iBas: iA, lo: bs[iA].l, hi: B, fi: o.i, k: k } });
+      continue;
+    }
+    const liq = liquidites(bs, k, o.e, P, veille[k]);
+    if (!liq.length) continue;
+    let tp1 = liq[0] - P.margeCible * atr;
+    if (P.tpMode === 'suffisante') { const bon = liq.find(function (x) { return (x - P.margeCible * atr - o.e) / risque >= P.rrMin; }); if (bon !== undefined) tp1 = bon - P.margeCible * atr; }
+    if ((tp1 - o.e) / risque < P.rrMin) { dbg(bs[k].t, '  RR trop faible', ((tp1 - o.e) / risque).toFixed(2)); continue; }
+    out.push({ k: k, t: t, groupe: groupe, entree: o.e, stop: stop, tp1: tp1, tp2: null, type: (o.ob ? 'OB' : 'FVG') + ' OTE (swing)', atr: atr, zone: { genre: 'swing', bas: bs[iA].l, haut: B, dispo: bs[iA].t },
+      mss: null, lect: null, expireBars: P.expireBougies, ote: { iBas: iA, lo: bs[iA].l, hi: B, fi: o.i, k: k } });
+  }
+  return out;
+}
+
 function backtesterActif(actif, M15, P, depuis, jusqua) {
   const bs = versBs(M15), bm = miroir(bs);
   const H = versBs(P.htf === 15 ? M15 : regrouper(M15, P.htf)), Hm = miroir(H);
-  const atrA = atrSerie(bs, 14), atrV = atrSerie(bm, 14);
+  const atrA = atrSerie(bs, 14), atrV = atrSerie(bm, 14), veilleA = plusHautsVeille(bs), veilleV = plusHautsVeille(bm);
   const regl = { dureeMaxJours: 20, margeBeR: 0.05, margeStopAtr: 0.1, pasMinR: 0.1 };
   // setups des deux sens, triés dans le temps ; un seul trade à la fois par actif
   const tous = [];
   for (const S of [1, -1]) {
     const g = S > 0 ? bs : bm;
-    for (const s of (P.mode === 'ote2' ? setupsOte2 : P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
+    for (const s of (P.mode === 'swing' ? function (g, Hh, a, PP, d, j) { return setupsSwing(g, Hh, a, PP, d, j, emaSerieH(g, PP)); } : P.mode === 'ote2' ? setupsOte2 : P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
   }
   tous.sort(function (a, b) { return a.s.t - b.s.t; });
   const trades = [];
@@ -494,10 +569,27 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     if (P.entree === 'marche' && S > 0) entree += actif.spread * P.spreadFacteur;
     if (actif.spread > P.spreadMaxR * (entree - s.stop)) continue;
     const sig = { sens: S > 0 ? 'buy' : 'sell', entree: S * entree, stop: S * s.stop, tp1: S * s.tp1, tp2: s.tp2 === null ? null : S * s.tp2,
-      expireA: new Date(s.t + (s.expireBars || P.dureeOrdre) * 15 * 60000).toISOString() };
-    if (P.annulerSiCible && ordreCaduc(M15, s.k + 1, sig, sig.sens, s.expireBars || P.dureeOrdre)) continue;
-    const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
-    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'ote2' ? 'HTF + MSS puis OTE par jambe (' : P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
+      expireA: new Date(M15[Math.min(M15.length - 1, s.k + 1 + (s.expireBars || P.dureeOrdre))].time).toISOString() };   // expiration comptée en BOUGIES (le week-end ne compte pas)
+    let kDep = s.k + 1;
+    if (s.tpDyn) {
+      // 1) attente du remplissage (le stop touché avant le remplissage annule l'ordre) ; 2) cible = 1re liquidité non prise connue JUSTE AVANT le remplissage
+      const dirS = sig.sens === 'buy' ? 1 : -1, g = S > 0 ? bs : bm, atrG = S > 0 ? atrA : atrV, vG = S > 0 ? veilleA : veilleV;
+      let f = -1;
+      for (let i = s.k + 1; i < Math.min(M15.length, s.k + 1 + s.expireBars); i++) {
+        const b = M15[i];
+        if (dirS > 0 ? b.low <= sig.entree : b.high >= sig.entree) { f = i; break; }
+        if (dirS > 0 ? b.low <= sig.stop : b.high >= sig.stop) break;
+      }
+      if (f < 0) continue;
+      const liq = liquidites(g, f - 1, s.entree, P, vG[f - 1]);
+      const risque = s.entree - s.stop;
+      let tpG = liq.length ? liq[0] - P.margeCible * atrG[f - 1] : null;
+      if (tpG !== null && P.tpMode === 'suffisante') { const bon = liq.find(function (x) { return (x - P.margeCible * atrG[f - 1] - s.entree) / risque >= P.rrMin; }); if (bon !== undefined) tpG = bon - P.margeCible * atrG[f - 1]; }
+      if (tpG === null || (tpG - s.entree) / risque < P.rrMin) continue;
+      sig.tp1 = S * tpG; s.tp1 = tpG; kDep = f;
+    } else if (P.annulerSiCible && ordreCaduc(M15, s.k + 1, sig, sig.sens, s.expireBars || P.dureeOrdre)) continue;
+    const issue = suivreTrade(M15, kDep, sig, actif.spread * P.spreadFacteur, regl);
+    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'swing' ? 'HTF POI + swing OTE (' : P.mode === 'ote2' ? 'HTF + MSS puis OTE par jambe (' : P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
       mss: !s.mss ? null : { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
       ote: s.ote ? { tOrigine: bs[s.ote.iBas].t, prixOrigine: S * s.ote.lo, prixExtreme: S * s.ote.hi, tFvg: bs[s.ote.fi - 2].t, fvgBas: Math.min(S * (S > 0 ? bs : bm)[s.ote.fi - 2].h, S * (S > 0 ? bs : bm)[s.ote.fi].l), fvgHaut: Math.max(S * (S > 0 ? bs : bm)[s.ote.fi - 2].h, S * (S > 0 ? bs : bm)[s.ote.fi].l), tOrdre: bs[s.ote.k].t,
