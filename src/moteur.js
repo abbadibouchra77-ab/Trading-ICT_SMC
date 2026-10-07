@@ -20,7 +20,8 @@
 
 // ------------------------------- Réglages -------------------------------------------
 const REGLAGES = {
-  noteMin: 20,             // note minimale pour un setup A++ (sur ~33 points possibles)
+  noteMin: 20,             // note minimale pour un setup A++ (sur ~30 points possibles)
+  biaisHTF: false,         // alignement Monthly / Weekly / Daily : écarté par Bouchra le 07/10/2026 (ni points, ni interdit)
   rrMin: 2,                // TP1 à au moins 2R
   margeStopAtr: 0.15,      // marge derrière la mèche du balayage M15, en ATR M15
   fraicheurMSS: 8,         // le MSS M15 doit dater de 8 bougies (2 h) au plus
@@ -486,7 +487,8 @@ function analyserCote(d, dc, S, ctx, R) {
   const enDecote = hD && lD ? prix < (hD.p + lD.p) / 2 : null;
   histoire.push('Vision HTF : Monthly ' + T(lMN.tendance) + ', Weekly ' + T(lW1.tendance) + ', Daily ' + T(lD1.tendance) +
     ' ; pour un ' + mot.achat + ', le biais est ' + biais + (enDecote === null ? '' : ', le prix est en ' + (enDecote ? mot.decote : mot.prime) + ' du dealing range Daily') + '.');
-  if (biais === 'aligné') pts(3, 'biais HTF aligné'); else if (biais === 'neutre') pts(1, 'biais HTF neutre');
+  // L'alignement M / W / D n'est plus utilisé (R.biaisHTF = false) : il reste seulement écrit dans l'histoire.
+  if (R.biaisHTF) { if (biais === 'aligné') pts(3, 'biais HTF aligné'); else if (biais === 'neutre') pts(1, 'biais HTF neutre'); }
   if (enDecote) pts(1, 'prix en ' + mot.decote + ' (dealing range Daily)');
 
   // Liquidité de toutes les unités de temps, et zones
@@ -603,7 +605,7 @@ function analyserCote(d, dc, S, ctx, R) {
   if (superposes) pts(1, 'OB + FVG superposés (' + superposes + ')');
 
   // Contre le biais HTF : seulement si la Smart Money a pris une liquidité HTF dans une zone HTF
-  if (biais === 'contraire') {
+  if (R.biaisHTF && biais === 'contraire') {
     const liqHTF = bal.niveaux.concat(balA ? balA.niveaux : []).some(function (nv) { return nv.ut === 'D1' || nv.ut === 'W1' || nv.ut === 'MN'; });
     if (!(liqHTF && zonesHTF.length)) return stop('Contre le biais HTF sans balayage d\'une liquidité HTF dans une zone HTF : interdit.');
     histoire.push('Contre le biais HTF, mais liquidité HTF prise dans une zone HTF : retournement possible.');
