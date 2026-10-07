@@ -25,6 +25,9 @@ const REGLAGES = {
     rrMin: 2,                // TP1 à au moins 2R
   margeStopAtr: 0.15,      // marge derrière la mèche du balayage M15, en ATR M15
   fraicheurMSS: 8,         // le MSS M15 doit dater de 8 bougies (2 h) au plus
+  mssPivot: 3,             // le MSS casse un vrai sommet M15 (pivot de 3 bougies de chaque côté), pas une petite bosse
+  stopMinAtrH1: 1.0,       // le stop est au moins à 1 ATR H1 de l'entrée : jamais collé à l'entrée
+  rangeH1: { bougies: 24, largeurAtr: 3, efficacite: 0.3 }, // H1 en range : 24 bougies dans 3 ATR, sans direction
   fenetreBalayageM15: 48,  // balayage M15 cherché sur les 12 dernières heures
   fenetreLegH4: 60,        // point B H4 cherché sur les 60 dernières bougies H4 (H1 : 80)
   dureeOrdreCrypto: 3,     // cryptos : l'ordre limite expire au bout de 3 h
@@ -661,6 +664,16 @@ function analyserCote(d, dc, S, ctx, R) {
   if (!contextes.length) { raisons.push('Aucun contexte H4 / H1 lisible (' + echecs.join(' ; ') + ').'); return res; }
 
   // ---------------- 3. RÉACTION M15 + ENTRÉE, pour chaque contexte ----------------
+  // H1 en range juste avant l'instant t : bougies serrées et sans direction (efficacité faible)
+  function rangeH1(t) {
+    const g = R.rangeH1;
+    let fin = -1; for (let i = n1 - 1; i >= 0; i--) if (H1[i].t + DUREE.H1 <= t) { fin = i; break; }
+    if (fin < g.bougies) return null;
+    let hi = -Infinity, lo = Infinity, chemin = 0;
+    for (let i = fin - g.bougies + 1; i <= fin; i++) { hi = Math.max(hi, H1[i].h); lo = Math.min(lo, H1[i].l); if (i > fin - g.bougies + 1) chemin += Math.abs(H1[i].c - H1[i - 1].c); }
+    const eff = chemin > 0 ? Math.abs(H1[fin].c - H1[fin - g.bougies + 1].c) / chemin : 0;
+    return (hi - lo <= g.largeurAtr * atr1 && eff < g.efficacite) ? { haut: hi, bas: lo } : null;
+  }
   function enKZ(t) { const h = ny(t).hm; return R.killzones.filter(function (k) { return h >= k.debut && h < k.fin; })[0] || null; }
   const rsi15 = rsiSerie(M15, 14), rsi1 = rsiSerie(H1, 14);
   function essayer(k) {
@@ -687,7 +700,7 @@ function analyserCote(d, dc, S, ctx, R) {
       .filter(function (g) { return g.i >= iA - 3 && g.i <= iA && g.meche <= A15 + 1e-9; }).slice(-1)[0] || null;
     if (!bal && !k.liquidite.length) return stop('aucune prise de liquidité dans l\'histoire : la Smart Money ne s\'est pas montrée.');
     const i0 = bal ? bal.i : iA;
-    const sommetsAvant = pivots(M15, 2).filter(function (p) { return p.type === 'H' && p.i + 2 <= i0; });
+    const sommetsAvant = pivots(M15, R.mssPivot).filter(function (p) { return p.type === 'H' && p.i + R.mssPivot <= i0; });
     if (!sommetsAvant.length) return stop('pas de sommet M15 de référence pour le MSS.');
     const ref = sommetsAvant[sommetsAvant.length - 1];
     let iMSS = -1; for (let j = iA; j < n15; j++) if (M15[j].c > ref.p) { iMSS = j; break; }
@@ -696,6 +709,9 @@ function analyserCote(d, dc, S, ctx, R) {
     const corpsMoy15 = moyenne(M15.slice(Math.max(0, i0 - 20), i0).map(corps));
     let iDep = -1; for (let q = i0; q <= iMSS; q++) if (M15[q].c > M15[q].o && corps(M15[q]) >= 1.5 * corpsMoy15) iDep = q;
     if (iDep < 0) return stop('MSS M15 sans vrai déplacement (pas de grande bougie).');
+    // Pas de trade dans un range : si le H1 était en range avant la réaction, le MSS doit faire sortir le prix du range.
+    const boite = rangeH1(M15[i0].t);
+    if (boite && M15[iMSS].c <= boite.haut) return stop('le marché est en range H1 (' + P(boite.bas) + ' - ' + P(boite.haut) + ') et le MSS n\'en est pas sorti : entrée prématurée, on attend.');
     const kz = enKZ(M15[iMSS].t);
     if (!ctx.crypto && (!kz || !enKZ(ctx.maintenant))) return stop('hors killzone (Londres 02h-05h, New York 07h-11h, heure de NY) : pas d\'ordre.');
 
@@ -711,7 +727,8 @@ function analyserCote(d, dc, S, ctx, R) {
     else return stop('MSS sans FVG ni OB M15 pour placer l\'ordre limite.');
     const entree = (zoneEntree.bas + zoneEntree.haut) / 2;
     for (let j = zoneEntree.i + 1; j < n15; j++) if (M15[j].l <= entree) return stop('le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : ordre manqué, on ne court pas après.');
-    const stopPx = A15 - R.margeStopAtr * atr15;
+    // stop derrière la réaction M15, et au moins à 1 ATR H1 de l'entrée (le bruit ne doit pas le toucher)
+    const stopPx = Math.min(A15 - R.margeStopAtr * atr15, entree - R.stopMinAtrH1 * atr1);
     const risque = entree - stopPx;
     if (!(risque > 0.2 * atr15)) return stop('stop trop serré par rapport à l\'entrée.');
     if (risque > 3 * atr4) return stop('stop trop large (plus de 3 ATR H4).');
