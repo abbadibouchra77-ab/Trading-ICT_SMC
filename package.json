@@ -1,0 +1,11 @@
+{
+  "name": "smc-vision",
+  "private": true,
+  "description": "Bot de trading ICT / SMC (compte démo) : moteur, backtest, cerveau Claude",
+  "scripts": {
+    "test": "node tests/test_moteur.js && node tests/test_backtest.js && node tests/test_n8n.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0"
+  }
+}
