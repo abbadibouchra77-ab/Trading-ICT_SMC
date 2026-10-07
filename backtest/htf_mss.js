@@ -34,6 +34,11 @@ const DEFAUT = {
   zoneMinAtrH: 0,       // taille de la POI HTF au moins ce multiple de l'ATR HTF (0 = aucun minimum)
   zoneMaxAtrH: 0,       // ... et au plus (0 = aucun maximum) : écarte les zones démesurées
   unSeulRetour: false,  // la POI est consommée après son premier retour : sans MSS dans la fenêtre, on n'y revient plus
+  mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
+  sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
+  sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
+  sniperChoix: 'premier', // 'premier' (le 1er FVG M15 du mouvement : celui de la cassure de structure), 'proche' (50 % le plus proche du prix) ou 'profond' (le plus loin dans la POI)
+  dureeSniper: 96,      // sniper : l'ordre limite attend 96 bougies M15 (24 h)
   htf: 240,             // unité de temps du FVG, en minutes : 60 (H1), 240 (H4) ou 1440 (D1)
   ageMax: 60,           // le FVG HTF reste valable 60 bougies HTF
   zoneMinAtr: 0,        // taille minimale du FVG HTF en ATR M15 (0 = pas de minimum)
@@ -47,6 +52,7 @@ const DEFAUT = {
   stopRecul: 96,        // mode 'recul' : nombre de bougies M15 regardées (96 = 24 h)
   margeStop: 0.1,       // marge sous le creux, en ATR M15
   stopMinAtr: 0.3,      // stop trop serré : on refuse
+  margeCible: 0,        // la cible est posée à cette fraction d'ATR AVANT la liquidité (elle n'est pas toujours touchée au tick près)
   rrMin: 1,             // la première liquidité doit offrir au moins 1 R
   rrMax: 0,             // 0 = pas de maximum ; sinon on plafonne TP1 à rrMax R
   dureeOrdre: 16,       // l'ordre limite attend 16 bougies (4 h)
@@ -84,11 +90,11 @@ function poiHtf(H, htfMs, P) {
     const taille = function (z) { return (!P.zoneMinAtrH || z >= P.zoneMinAtrH * atrH[i]) && (!P.zoneMaxAtrH || z <= P.zoneMaxAtrH * atrH[i]); };
     const biaisOk = !P.biaisEma || H[i].c > ema[i];
     if (!biaisOk) continue;
-    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false, origine: H[i - 2].l });
+    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, t0: H[i - 2].t, touche: -1, utilise: false, origine: H[i - 2].l });
     // OB : dernière bougie baissière avant une bougie haussière qui clôture au-dessus de son plus haut (déplacement)
     const j = i - 1;
     if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i) && taille(H[j].h - H[j].l))
-      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, touche: -1, utilise: false, origine: H[j].l });
+      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, t0: H[j].t, touche: -1, utilise: false, origine: H[j].l });
   }
   return zs;
 }
@@ -225,6 +231,42 @@ function lecture(S, g, l) {
     ob: l.ob ? { bas: Math.min(pr(l.ob.bas), pr(l.ob.haut)), haut: Math.max(pr(l.ob.bas), pr(l.ob.haut)), t: g[l.ob.i].t } : null };
 }
 
+// Mode « sniper » : la POI HTF devient disponible ; parmi les FVG M15 formés PENDANT le mouvement qui l'a créée
+// (impulsion avec corps), on prend celui dont le 50 % est dans la POI (le plus proche du prix) et on place un ordre limite dessus.
+// Stop derrière la mèche de la bougie qui a créé le mouvement (1re bougie du FVG M15). Cible : première liquidité.
+function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
+  const htfMs = P.htf * 60000, zs = poiHtf(H, htfMs, P), veille = plusHautsVeille(bs), out = [];
+  const debut = function (t) { let a = 0, b = bs.length; while (a < b) { const m = (a + b) >> 1; if (bs[m].t < t) a = m + 1; else b = m; } return a; };
+  for (const z of zs) {
+    const k0 = debut(z.dispo - 15 * 60000);                        // 1re bougie M15 clôturée à / après la disponibilité de la POI
+    if (k0 < 60 || k0 >= bs.length - 1) continue;
+    const t = bs[k0].t + 15 * 60000, atr = atrs[k0];
+    if (!Number.isFinite(atr) || t < depuis || bs[k0].t > jusqua) continue;
+    if (!(bs[k0].c >= z.bas)) continue;                            // POI déjà invalidée
+    let meilleur = null;
+    for (let q = Math.max(debut(z.t0) + 2, 22); q < k0; q++) {
+      if (!(bs[q].l > bs[q - 2].h)) continue;                      // FVG haussier M15 (q-2, q-1, q)
+      const zb = bs[q - 2].h, zh = bs[q].l, e = (zb + zh) / 2;
+      if (zh - zb < P.sniperFvgMinAtr * atrs[q]) continue;
+      let cm = 0; for (let i = q - 21; i < q - 1; i++) cm += Math.abs(bs[i].c - bs[i].o); cm /= 20;
+      if (!(Math.abs(bs[q - 1].c - bs[q - 1].o) >= P.sniperCorps * cm)) continue;   // vraie impulsion
+      if (!(e >= z.bas && e <= z.haut)) continue;                  // le 50 % est dans la POI
+      const mieux = !meilleur || (P.sniperChoix === 'proche' ? e > meilleur.e : P.sniperChoix === 'profond' ? e < meilleur.e : false);   // 'premier' : on garde le 1er trouvé
+      if (mieux) meilleur = { e: e, q: q, stop: bs[q - 2].l };
+    }
+    if (!meilleur || !(bs[k0].c > meilleur.e)) continue;           // ordre limite d'achat : le prix doit être au-dessus
+    const stop = meilleur.stop - P.margeStop * atr, risque = meilleur.e - stop;
+    if (!(risque >= P.stopMinAtr * atr)) continue;
+    const liq = liquidites(bs, k0, meilleur.e, P, veille[k0]);
+    if (!liq.length || (liq[0] - meilleur.e) / risque < P.rrMin) continue;
+    let tp1 = liq[0] - P.margeCible * atr;
+    if (!((tp1 - meilleur.e) / risque >= P.rrMin)) continue;
+    if (P.rrMax && (tp1 - meilleur.e) / risque > P.rrMax) tp1 = meilleur.e + P.rrMax * risque;
+    out.push({ k: k0, t: t, entree: meilleur.e, stop: stop, tp1: tp1, tp2: liq.length > 1 && liq[1] - P.margeCible * atr > tp1 ? liq[1] - P.margeCible * atr : null, type: 'FVG M15 50 % (sniper)', atr: atr, zone: z, mss: null, lect: null, expireBars: P.dureeSniper });
+  }
+  return out;
+}
+
 function backtesterActif(actif, M15, P, depuis, jusqua) {
   const bs = versBs(M15), bm = miroir(bs);
   const H = versBs(P.htf === 15 ? M15 : regrouper(M15, P.htf)), Hm = miroir(H);
@@ -234,7 +276,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
   const tous = [];
   for (const S of [1, -1]) {
     const g = S > 0 ? bs : bm;
-    for (const s of setupsAchat(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
+    for (const s of (P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
   }
   tous.sort(function (a, b) { return a.s.t - b.s.t; });
   const trades = [];
@@ -246,12 +288,12 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     if (P.entree === 'marche' && S > 0) entree += actif.spread * P.spreadFacteur;
     if (actif.spread > P.spreadMaxR * (entree - s.stop)) continue;
     const sig = { sens: S > 0 ? 'buy' : 'sell', entree: S * entree, stop: S * s.stop, tp1: S * s.tp1, tp2: s.tp2 === null ? null : S * s.tp2,
-      expireA: new Date(s.t + P.dureeOrdre * 15 * 60000).toISOString() };
+      expireA: new Date(s.t + (s.expireBars || P.dureeOrdre) * 15 * 60000).toISOString() };
     const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
-    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'HTF FVG + MSS M15 (' + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
+    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
-      mss: { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
-      lecture: lecture(S, S > 0 ? bs : bm, s.lect),
+      mss: !s.mss ? null : { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
+      lecture: s.lect ? lecture(S, S > 0 ? bs : bm, s.lect) : null,
       zoneHtf: { genre: s.zone.genre, bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
       f: { risqueAtr: +((entree - s.stop) / s.atr).toFixed(2), rrTp1: +((s.tp1 - entree) / (entree - s.stop)).toFixed(2) } }, issue));
     libre = (issue.tFin || s.t) + 1;
