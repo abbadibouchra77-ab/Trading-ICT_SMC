@@ -16,7 +16,7 @@
 //         [--actifs XAUUSD,EURUSD] [--sortie dossier] [--reglages '{"rr1":2}'] [--grille fichier.json]
 const fs = require('fs');
 const path = require('path');
-const { lireCSV, unitesDeTemps } = require('./donnees.js');
+const { lireCSV, unitesDeTemps, regrouper } = require('./donnees.js');
 const { suivreTrade } = require('./simulation.js');
 const { ACTIFS, trouverFichier } = require('./lancer.js');
 
@@ -35,6 +35,7 @@ const DEFAUT = {
   sortieCassure: 0.1,               // cas 2 : clôture au-delà du range d'au moins 0,1 ATR
   milieuDistribution: true,         // cas 1 : la distribution clôture au-delà du milieu du range
   entree: 'fvg',                    // 'fvg' (50 % du FVG, sinon 50 % du corps) ou 'corps' (50 % du corps)
+  ut: 15,                           // unité de temps en minutes : 15 (M15), 30 (M30), 60 (H1)
   stop: 'meche',                    // 'meche' (au-delà de la mèche / bougie de cassure), 'milieu' (cassure : sous le milieu du range), 'range' (au-delà du range entier)
   stopAtr: 0,                       // distance minimale du stop en ATR M15 (0 = pas de minimum)
   margeStop: 0.1,                  // marge du stop en ATR
@@ -175,7 +176,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
   let libre = 0;
   const regl = { dureeMaxJours: 20, margeBeR: 0.05, margeStopAtr: 0.1, pasMinR: 0.1 };
   for (let k = 60; k < bs.length - 1; k++) {
-    const t = bs[k].t + 15 * 60000; // clôture de la bougie k
+    const t = bs[k].t + P.ut * 60000; // clôture de la bougie k
     if (t < depuis || bs[k].t > jusqua || t < libre) continue;
     if (P.sessions) { const h = new Date(bs[k].t).getUTCHours(); if (!P.sessions.some(function (s) { return h >= s[0] && h < s[1]; })) continue; }
     // signal sur la bougie k (entrée « corps ») ou sur la bougie k-1 avec FVG confirmé par k
@@ -202,7 +203,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     const sig = { sens: S > 0 ? 'buy' : 'sell', entree: S * nv.entree, stop: S * nv.stop, tp1: S * nv.tp1, tp2: nv.tp2 === null ? null : S * nv.tp2,
       expireA: new Date(t + P.dureeOrdre * 15 * 60000).toISOString() };
     const issue = suivreTrade(M15, k + 1, sig, actif.spread * P.spreadFacteur, regl);
-    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'AMD ' + trouve.s.cas + ' M15', grade: 'AMD', entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2,
+    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'AMD ' + trouve.s.cas + ' ' + ({ 15: 'M15', 30: 'M30', 60: 'H1' }[P.ut] || P.ut + 'min'), grade: 'AMD', entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2,
       typeEntree: nv.type, range: { debut: bs[trouve.s.rg.debut].t, haut: S > 0 ? trouve.s.rg.haut : -trouve.s.rg.bas, bas: S > 0 ? trouve.s.rg.bas : -trouve.s.rg.haut, bougies: trouve.s.rg.bougies },
       tSignal: bs[trouve.s.q].t, f: Object.assign({ risqueAtr: +((nv.entree - nv.stop) / trouve.s.atr).toFixed(2), fvg: nv.type === 'FVG 50 %' }, trouve.s.f), tMeche: bs[trouve.s.m].t }, issue));
     libre = (issue.tFin || t) + 1;
@@ -227,7 +228,10 @@ function lancer(donnees, P, depuis, jusqua, actifs, cache) {
     if (actifs && actifs.indexOf(a.symbol) < 0) continue;
     const f = trouverFichier(donnees, a); if (!f) continue;
     if (!cache[a.symbol]) cache[a.symbol] = unitesDeTemps(lireCSV(f)).M15;
-    tous.push.apply(tous, backtesterActif(a, cache[a.symbol], P, depuis, jusqua));
+    // unité de temps testée : M15 (15), M30 (30) ou H1 (60), reconstruite depuis le M15
+    const cle = a.symbol + '|' + P.ut;
+    if (!cache[cle]) cache[cle] = P.ut === 15 ? cache[a.symbol] : regrouper(cache[a.symbol], P.ut);
+    tous.push.apply(tous, backtesterActif(a, cache[cle], P, depuis, jusqua));
   }
   return tous;
 }
