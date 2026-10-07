@@ -1,13 +1,13 @@
 // Backtest de la stratégie « FVG haute unité de temps + MSS en M15 » (explication du 07/10/2026).
 //
 // Achat (la vente = la même chose sur le graphique retourné) :
-//  1. Biais HTF : un FVG HAUSSIER en haute unité de temps (H1 / H4 / D1), tant qu'il n'est pas invalidé
-//     (aucune clôture M15 sous son bas). Il sert de zone d'intérêt (POI).
+//  1. Biais HTF : un POI HAUSSIER en haute unité de temps (FVG et/ou OB, réglage poi), tant qu'il n'est pas invalidé
+//     (aucune clôture M15 sous son bas).
 //  2. Le prix REVIENT dans ce FVG HTF.
 //  3. Dans la POI, on cherche UNIQUEMENT un MSS haussier en M15 : après le creux du retour, une clôture M15
 //     au-dessus du dernier sommet pivot qui précède ce creux. Les FVG baissiers M15 sont ignorés.
-//  4. Entrée : ordre limite au retour dans le FVG haussier créé par le MSS (50 %, sinon 50 % du corps de la
-//     bougie qui casse). Stop sous le creux du retour.
+//  4. Entrée : ordre limite au retour dans le FVG et/ou l'OB créés par le MSS (réglage zoneEntree ; 50 % de la zone)
+//     Stop sous le creux du retour.
 //  5. Objectif : la première liquidité au-dessus (premier sommet pivot M15 non balayé, ou plus haut de la veille).
 //     TP2 = la liquidité suivante (s'il y en a une). Break-even après TP1 puis stop suiveur (gestion du bot).
 //
@@ -22,6 +22,11 @@ const { ACTIFS, trouverFichier } = require('./lancer.js');
 const { bilan, grouper } = require('./amd15.js');
 
 const DEFAUT = {
+  poi: 'fvg+ob',        // POI de la haute unité de temps : 'fvg', 'ob' ou 'fvg+ob' (l'un OU l'autre)
+  zoneEntree: 'fvg+ob', // zone d'entrée créée par le MSS en M15 : 'fvg', 'ob' ou 'fvg+ob' (la plus haute = touchée en premier)
+  niveauEntree: 50,     // 50 = milieu de la zone, 0 = bord proche (haut de la zone, entrée au 1er contact)
+  obCorps: 1.0,         // OB HTF : la bougie qui suit a un corps ≥ 1 × le corps moyen des 20 bougies
+  biaisEma: 0,          // 0 = aucun ; sinon la clôture H4 doit être du bon côté de l'EMA de cette période (ex. 50)
   htf: 240,             // unité de temps du FVG, en minutes : 60 (H1), 240 (H4) ou 1440 (D1)
   ageMax: 60,           // le FVG HTF reste valable 60 bougies HTF
   zoneMinAtr: 0,        // taille minimale du FVG HTF en ATR M15 (0 = pas de minimum)
@@ -59,11 +64,20 @@ function pivotHaut(bs, i, L) {
   return true;
 }
 
-// FVG haussiers de la haute unité de temps : disponibles à la clôture de leur 3e bougie
-function fvgHtf(H, htfMs) {
+// POI haussiers de la haute unité de temps (FVG et/ou OB), disponibles à la clôture de leur dernière bougie
+function poiHtf(H, htfMs, P) {
   const zs = [];
+  const ema = new Array(H.length).fill(NaN);
+  if (P.biaisEma) { const a = 2 / (P.biaisEma + 1); let e = H.length ? H[0].c : 0; for (let i = 0; i < H.length; i++) { e += a * (H[i].c - e); ema[i] = e; } }
+  const corpsMoy = function (i) { let s = 0, n = 0; for (let q = Math.max(0, i - 20); q < i; q++) { s += Math.abs(H[q].c - H[q].o); n++; } return n ? s / n : 0; };
   for (let i = 2; i < H.length; i++) {
-    if (H[i].l > H[i - 2].h) zs.push({ bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false });
+    const biaisOk = !P.biaisEma || H[i].c > ema[i];
+    if (!biaisOk) continue;
+    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, touche: -1, utilise: false });
+    // OB : dernière bougie baissière avant une bougie haussière qui clôture au-dessus de son plus haut (déplacement)
+    const j = i - 1;
+    if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i))
+      zs.push({ genre: 'OB', bas: H[j].l, haut: H[j].h, dispo: H[i].t + htfMs, touche: -1, utilise: false });
   }
   return zs;
 }
@@ -88,6 +102,13 @@ function chercherMss(bs, k, z, P) {
 function fvgMss(bs, iBas, k) {
   for (let i = k; i >= iBas + 2; i--) if (bs[i].l > bs[i - 2].h) return { bas: bs[i - 2].h, haut: bs[i].l, i: i };
   return null;
+}
+
+// OB haussier du MSS : la dernière bougie baissière avant la poussée qui mène à la bougie qui casse
+function obMss(bs, iBas, k) {
+  let i = k - 1;
+  while (i > iBas && !(bs[i].c < bs[i].o)) i--;
+  return bs[i].c < bs[i].o ? { bas: bs[i].l, haut: bs[i].h, i: i } : null;
 }
 
 // Première liquidité au-dessus de l'entrée : sommet pivot M15 non balayé, ou plus haut de la veille
@@ -118,7 +139,7 @@ function plusHautsVeille(bs) {
 
 // Parcourt un graphique (retourné pour les ventes) et renvoie les setups d'achat, dans l'ordre du temps.
 function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
-  const htfMs = P.htf * 60000, zs = fvgHtf(H, htfMs), veille = plusHautsVeille(bs);
+  const htfMs = P.htf * 60000, zs = poiHtf(H, htfMs, P), veille = plusHautsVeille(bs);
   const out = [];
   let prochaine = 0, actives = [], libre = 0;
   for (let k = 60; k < bs.length - 1; k++) {
@@ -138,15 +159,21 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
       const m = chercherMss(bs, k, z, P);                                         // 3. MSS en M15
       if (!m) continue;
       // 4. entrée
-      const f = P.entree === 'marche' ? null : fvgMss(bs, m.iBas, k);
       const b = bs[k];
-      let entree, type;
+      let entree = null, type = '';
       if (P.entree === 'marche') { entree = b.c; type = 'au marché'; }
-      else if (f) { entree = (f.bas + f.haut) / 2; type = 'FVG MSS 50 %'; }
-      else { entree = (b.o + Math.max(b.c, b.o)) / 2; type = 'corps 50 %'; }
+      else {
+        const niv = function (zn) { return zn.haut - (zn.haut - zn.bas) * P.niveauEntree / 100; };
+        const c = [];
+        if (/fvg/.test(P.zoneEntree)) { const f = fvgMss(bs, m.iBas, k); if (f) c.push({ e: niv(f), t: 'FVG MSS' }); }
+        if (/ob/.test(P.zoneEntree)) { const o = obMss(bs, m.iBas, k); if (o) c.push({ e: niv(o), t: 'OB MSS' }); }
+        c.sort(function (x, y) { return y.e - x.e; });      // la plus haute est touchée en premier
+        const ok = c.filter(function (x) { return b.c > x.e; });
+        if (!ok.length) continue;                            // pas de zone, ou le prix est déjà sous elle
+        entree = ok[0].e; type = ok[0].t;
+      }
       const stop = bs[m.iBas].l - P.margeStop * atr, risque = entree - stop;
       if (!(risque >= P.stopMinAtr * atr)) continue;
-      if (P.entree !== 'marche' && !(b.c > entree)) continue;                    // déjà sous l'entrée
       // 5. première liquidité
       const liq = liquidites(bs, k, entree, P, veille[k]);
       if (!liq.length) continue;
@@ -187,7 +214,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
     trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'HTF FVG + MSS M15 (' + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
-      zoneHtf: { bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
+      zoneHtf: { genre: s.zone.genre, bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
       f: { risqueAtr: +((entree - s.stop) / s.atr).toFixed(2), rrTp1: +((s.tp1 - entree) / (entree - s.stop)).toFixed(2) } }, issue));
     libre = (issue.tFin || s.t) + 1;
   }
@@ -227,4 +254,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { DEFAUT, fvgHtf, chercherMss, fvgMss, liquidites, setupsAchat, backtesterActif, lancer };
+module.exports = { DEFAUT, poiHtf, chercherMss, fvgMss, liquidites, setupsAchat, backtesterActif, lancer };
