@@ -206,11 +206,22 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
       if (P.rrMax && (tp1 - entree) / risque > P.rrMax) tp1 = entree + P.rrMax * risque;
       const tp2 = liq.length > 1 && liq[1] > tp1 ? liq[1] : null;
       z.utilise = true;
-      out.push({ k: k, t: t, entree: entree, stop: stop, tp1: tp1, tp2: tp2, type: type, atr: atr, zone: z, mss: m });
+      let legHi = -Infinity; for (let q = m.iBas; q <= k; q++) legHi = Math.max(legHi, bs[q].h);
+      const lect = { iTouche: z.touche, iBas: m.iBas, iPivot: m.p, k: k, hi: legHi, lo: bs[m.iBas].l, fvg: fvgMss(bs, m.iBas, k), ob: obMss(bs, m.iBas, k) };
+      out.push({ lect: lect, k: k, t: t, entree: entree, stop: stop, tp1: tp1, tp2: tp2, type: type, atr: atr, zone: z, mss: m });
       break;
     }
   }
   return out;
+}
+
+// La lecture du bot, en prix et en temps réels (les ventes sont remises dans le bon sens), pour la dessiner sur un graphique
+function lecture(S, g, l) {
+  const pr = function (x) { return S * x; };
+  const zone = function (z, i0) { return z ? { bas: Math.min(pr(z.bas), pr(z.haut)), haut: Math.max(pr(z.bas), pr(z.haut)), t: g[i0 === undefined ? z.i : i0].t } : null; };
+  return { tTouche: g[l.iTouche].t, tCreux: g[l.iBas].t, prixCreux: pr(l.lo), tPivot: g[l.iPivot].t, tCassure: g[l.k].t, hautJambe: pr(l.hi),
+    fvg: l.fvg ? { bas: Math.min(pr(l.fvg.bas), pr(l.fvg.haut)), haut: Math.max(pr(l.fvg.bas), pr(l.fvg.haut)), t: g[l.fvg.i - 2].t } : null,
+    ob: l.ob ? { bas: Math.min(pr(l.ob.bas), pr(l.ob.haut)), haut: Math.max(pr(l.ob.bas), pr(l.ob.haut)), t: g[l.ob.i].t } : null };
 }
 
 function backtesterActif(actif, M15, P, depuis, jusqua) {
@@ -239,6 +250,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: 'HTF FVG + MSS M15 (' + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
       mss: { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
+      lecture: lecture(S, S > 0 ? bs : bm, s.lect),
       zoneHtf: { genre: s.zone.genre, bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
       f: { risqueAtr: +((entree - s.stop) / s.atr).toFixed(2), rrTp1: +((s.tp1 - entree) / (entree - s.stop)).toFixed(2) } }, issue));
     libre = (issue.tFin || s.t) + 1;
