@@ -40,6 +40,7 @@ const DEFAUT = {
   fenetreBos: 192,      // le BOS doit venir dans les 192 bougies M15 après le MSS
   oteBandeMin: 50, oteBandeMax: 78,   // mode 'ote' : bande de retracement de la jambe complète où doit se trouver le 50 % du FVG
   confirmeRetrace: 0.2, // mode 'ote' : la jambe est terminée quand le prix a retracé 20 % de sa longueur
+  fvgOteMinAtr: 0,      // mode 'ote' : le FVG retenu fait au moins ce multiple de l'ATR M15 (écarte les micro-FVG)
   jambeMinAtr: 3,       // mode 'ote' : la jambe doit mesurer au moins 3 ATR M15 avant qu'on trace son OTE
   fenetreJambe: 96,     // mode 'ote' : la jambe doit se terminer dans les 96 bougies M15
   poiLive: false,       // mode 'ote' : la POI HTF (FVG) est suivie EN DIRECT dès l'ouverture de sa 3e bougie, sans attendre la clôture
@@ -330,11 +331,12 @@ function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
 // la zone OTE est la bande 50-78 % de retracement de la JAMBE COMPLÈTE ; tout FVG M15 de la jambe dont le 50 % est dans cette bande
 // est une zone d'intérêt (le plus proche du prix en premier) : ordre limite à son 50 %, stop derrière la mèche d'origine de la jambe.
 // Ensuite un BOS (nouvelle cassure dans le même sens) donne une 2e jambe : même raisonnement, même cible.
-function ordreOte(bs, iBas, r, hiR, P) {
+function ordreOte(bs, iBas, r, hiR, P, atrR) {
   const lo = bs[iBas].l, L = hiR - lo;
   let meilleur = null;
   for (let i = iBas + 2; i <= r; i++) {
     if (!(bs[i].l > bs[i - 2].h)) continue;
+    if (bs[i].l - bs[i - 2].h < P.fvgOteMinAtr * atrR) continue;
     const e = (bs[i - 2].h + bs[i].l) / 2, ret = (hiR - e) / L * 100;
     if (ret < P.oteBandeMin || ret > P.oteBandeMax) continue;
     if (!(bs[r].c > e)) continue;
@@ -370,7 +372,7 @@ function setupsOte(bs, H, atrs, P, depuis, jusqua) {
         if (k - g.k0 > P.fenetreJambe) { z.utilise = true; continue; }
         if (g.hi - lo < P.jambeMinAtr * atr) continue;
         if (!(bs[k].c <= g.hi - P.confirmeRetrace * (g.hi - lo))) continue;
-        const o = ordreOte(bs, g.iBas, k, g.hi, P);
+        const o = ordreOte(bs, g.iBas, k, g.hi, P, atr);
         if (o) {
           const base = g.etape === 1 || P.bosStop !== 'origine' ? lo : bs[g.origine].l;
           const stop = base - P.margeStop * atr, risque = o.e - stop;
