@@ -18,7 +18,15 @@ const deals = liste('Deals du jour').filter(estCloture);
 const avecEtiquette = deals.some(function (d) { return texteEtiquette(d) !== ''; });
 const dealsBot = avecEtiquette ? deals.filter(estDuBot) : deals;
 const seuil = -0.25 * solde * risquePct / 100; // une vraie perte, pas un petit résultat négatif
-const pertes = dealsBot.filter(function (d) { return netDeal(d) < seuil; }).length;
+// Une perte = un TRADE perdant : les deux demi-ordres d'un même trade, clôturés ensemble
+// (même actif, même tranche de 5 minutes), ne comptent que pour une seule perte.
+const parTrade = {};
+dealsBot.forEach(function (d, k) {
+  const t = Date.parse(d.time || d.executionTime || d.timestamp || '');
+  const cle = Number.isFinite(t) ? d.symbol + '|' + Math.floor(t / 300000) : 'deal' + k;
+  parTrade[cle] = (parTrade[cle] || 0) + (netDeal(d) || 0);
+});
+const pertes = Object.keys(parTrade).filter(function (k) { return parTrade[k] < seuil; }).length;
 if (pertes >= cfg.maxPertesJour) return [];
 
 // 2) Ce qui est déjà engagé : positions ouvertes et ordres en attente.

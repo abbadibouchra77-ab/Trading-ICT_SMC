@@ -46,6 +46,9 @@ assert.ok(actifs.every(function (a) { return a.risquePct === 3.5; }), 'solde 10 
 // 2 pertes aujourd'hui : plus rien n'est analysé
 const deuxPertes = Object.assign({}, sorties, { 'Deals du jour': [{ type: 'close', netProfit: -100, label: 'SMC-Vision' }, { type: 'close', netProfit: -95, label: 'SMC-Vision' }] });
 assert.strictEqual(executer('Préparer le cycle', deuxPertes).length, 0, '2 pertes : on arrête');
+// les deux demi-ordres d'un même trade stoppés ensemble = UNE seule perte : on continue
+const unTrade = Object.assign({}, sorties, { 'Deals du jour': [{ type: 'close', symbol: 'XAUUSD', time: '2026-09-01T08:00:10Z', netProfit: -100, label: 'SMCV' }, { type: 'close', symbol: 'XAUUSD', time: '2026-09-01T08:00:12Z', netProfit: -95, label: 'SMCV' }] });
+assert.ok(executer('Préparer le cycle', unTrade).length > 0, 'un seul trade perdant (2 demi-ordres) : le bot continue');
 // Risque dégressif selon le solde
 [[5000, 5], [7499, 5], [7500, 4], [9999, 4], [10000, 3.5], [15000, 3], [20000, 2.5], [30000, 2], [49999, 2], [50000, 1.5], [99999, 1.5], [100000, 1], [250000, 1]].forEach(function (x) {
   const r = executer('Préparer le cycle', Object.assign({}, sorties, { 'Solde du compte': [{ balance: x[0] }] }))[0].risquePct;

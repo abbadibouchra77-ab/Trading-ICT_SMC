@@ -79,3 +79,18 @@ node tests/test_n8n.js         # les nœuds n8n, avec un faux bridge
 - Le bot demande au bridge les unités de temps `1d`, `1w` et `1M`. S'il ne les connaît pas, il reconstruit le Daily à partir du H4 (1 000 bougies, environ 6 mois), puis le Weekly et le Monthly à partir du Daily.
 - Les sessions (Asie, Londres, New York) sont calculées en heures UTC fixes.
 - GER40 (en euros) : le risque est converti avec un facteur prudent de 1,25.
+
+## Backtest
+
+Le dossier `backtest/` rejoue le bot sur l'historique, bougie M15 par bougie M15, sans regarder le futur :
+ordres limites qui expirent, spread, stop compté en premier si stop et objectif sont dans la même bougie,
+deux demi-positions avec break-even après TP1 puis stop suiveur M15, risque dégressif selon le solde,
+2 pertes par jour et 3 actifs engagés au plus.
+
+```
+node backtest/lancer.js --donnees <dossier des CSV> --depuis 2021-01-01 --jusqua 2025-12-31 --capital 10000 --sortie resultats
+node tests/test_backtest.js
+```
+
+Un CSV par actif (M15 ou M1), colonnes `time, open, high, low, close, volume`, heure en UTC.
+Le rapport (`resultats/rapport.md`) donne le compte complet, les résultats par actif et par année, et `trades.csv` liste chaque trade.
