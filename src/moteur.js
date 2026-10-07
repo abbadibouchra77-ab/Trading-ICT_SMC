@@ -884,25 +884,30 @@ function rangeAMD(bs, j, atr) {
 }
 
 // Les AMD d'achat d'une unité de temps, du plus récent au plus ancien (sur les `recul` dernières bougies).
-function amdAchat(bs, ut, atr, recul) {
+function amdAchat(bs, ut, atr, recul, zs) {
   const n = bs.length, out = [];
+  zs = zs || [];
   for (let j = n - 1; j >= Math.max(30, n - recul); j--) {
     const rg = rangeAMD(bs, j, atr);
     if (!rg) continue;
     const milieu = (rg.haut + rg.bas) / 2;
     const cm = moyenne(bs.slice(Math.max(0, j - 20), j).map(corps));
     const vm = volumeMoyen(bs, j, 20);
-    // Cas 1 : mèche(s) sous le range qui reviennent dedans, puis déplacement haussier avec volume
+    // Cas 1 : une ou plusieurs LONGUES mèches bien visibles sous le range (mèche ≥ la moitié de la bougie et
+    // ≥ 20 % de la hauteur du range), qui reviennent dedans ; la mèche va chercher un FVG formé AVANT le range ;
+    // puis la distribution part JUSTE APRÈS la mèche (dans les 2 bougies) : grande bougie haussière avec volume.
     let m = j, plusBas = Infinity;
-    while (m < n && m <= j + 3 && bs[m].l < rg.bas && bs[m].c >= rg.bas - 0.1 * rg.hauteur && Math.min(bs[m].o, bs[m].c) - bs[m].l >= 0.3 * (bs[m].h - bs[m].l)) { plusBas = Math.min(plusBas, bs[m].l); m++; }
+    while (m < n && m <= j + 3 && bs[m].l < rg.bas && bs[m].c >= rg.bas - 0.1 * rg.hauteur &&
+           Math.min(bs[m].o, bs[m].c) - bs[m].l >= 0.5 * (bs[m].h - bs[m].l) && rg.bas - bs[m].l >= 0.2 * rg.hauteur) { plusBas = Math.min(plusBas, bs[m].l); m++; }
     if (m > j) {
+      const tDebut = bs[rg.debut].t;
+      const fvg = zs.filter(function (z) { return z.role === 'achat' && /FVG|BPR/.test(z.type) && z.t < tDebut && plusBas <= z.haut && plusBas >= z.bas - 0.5 * atr; })[0] || null;
       let q = -1;
-      for (let k = m; k < Math.min(n, m + 4); k++) {
+      for (let k = m; k < Math.min(n, m + 2); k++) {
         const b = bs[k];
-        if (b.c < plusBas) break;
         if (b.c > b.o && corps(b) >= 1.5 * cm && (vm <= 0 || b.v >= 1.3 * vm) && b.c > milieu) { q = k; break; }
       }
-      if (q >= 0) { out.push({ cas: 'manipulation', ut: ut, rg: rg, i: j, q: q, extreme: plusBas, nbMeches: m - j }); continue; }
+      if (q >= 0 && fvg) { out.push({ cas: 'manipulation', ut: ut, rg: rg, i: j, q: q, extreme: plusBas, nbMeches: m - j, fvg: fvg }); continue; }
     }
     // Cas 2 : cassure franche du haut du range par une ou plusieurs bougies pleines (sans mèche de manipulation)
     let q2 = -1;
@@ -913,7 +918,7 @@ function amdAchat(bs, ut, atr, recul) {
       if (!pleine) break;
       if (b.c > rg.haut + 0.1 * atr) { q2 = k; break; }
     }
-    if (q2 >= 0) out.push({ cas: 'cassure', ut: ut, rg: rg, i: j, q: q2, extreme: milieu, nbMeches: 0 });
+    if (q2 >= 0) out.push({ cas: 'cassure', ut: ut, rg: rg, i: j, q: q2, extreme: milieu, nbMeches: 0, fvg: null });
   }
   return out;
 }
@@ -934,9 +939,16 @@ function analyserAMD(d, dc, S, ctx, R) {
   const deja = ctx.legsDejaTradees.map(function (x) { return String(x).split('#')[0]; });
   function enKZ(t) { const h = ny(t).hm; return R.killzones.filter(function (k) { return h >= k.debut && h < k.fin; })[0] || null; }
 
+  // zones (FVG...) de chaque UT avec leur heure : la mèche de manipulation doit aller chercher un FVG formé avant le range
+  const SERIES = { D1: d.D1, H4: d.H4, H1: d.H1, M15: M15 };
+  const zT = {};
+  ['D1', 'H4', 'H1', 'M15'].forEach(function (u) { zT[u] = zones(SERIES[u], u, Math.max(0, SERIES[u].length - 300)).map(function (z) { return Object.assign({ t: SERIES[u][z.i].t }, z); }); });
+  const zM15 = zT.M15;
+  const plusHautes = { H4: ['H4', 'D1'], H1: ['H1', 'H4', 'D1'], M15: ['M15', 'H1', 'H4', 'D1'] };
   for (const c of UTS) {
     const bs = c.bs, n = bs.length, atr = dernier(atrSerie(bs, 14));
-    const evts = amdAchat(bs, c.ut, atr, c.recul);
+    const zs = [].concat.apply([], plusHautes[c.ut].map(function (u) { return zT[u]; }));
+    const evts = amdAchat(bs, c.ut, atr, c.recul, zs);
     for (const e of evts) {
       const rg = e.rg, q = e.q, cle = c.ut + '|AMD-' + e.cas + '|' + bs[q].t + '|' + res.sens;
       const recit = 'AMD ' + c.ut + ' : range ' + P(rg.bas) + ' - ' + P(rg.haut) + ' (' + rg.bougies + ' bougies), ' +
@@ -947,18 +959,23 @@ function analyserAMD(d, dc, S, ctx, R) {
       // invalidation : clôture sous la mèche (cas 1) ou retour sous le milieu du range (cas 2)
       let mort = false; for (let k = q + 1; k < n; k++) if (bs[k].c < e.extreme) { mort = true; break; }
       if (mort) { refus('invalidé (le prix est revenu ' + mot.sous + ' ' + (e.cas === 'manipulation' ? 'la mèche' : 'milieu du range') + ').'); continue; }
-      // entrée : 50 % du FVG laissé par le déplacement, sinon milieu de la bougie de déplacement
-      let entree, typeEntree;
-      const k1 = [q, q + 1].filter(function (k) { return k + 1 < n && k >= 1 && bs[k + 1].l > bs[k - 1].h; })[0];
-      if (k1 !== undefined) { entree = (bs[k1 + 1].l + bs[k1 - 1].h) / 2; typeEntree = 'FVG ' + c.ut + ' du déplacement (50 %)'; }
-      else { entree = (bs[q].o + bs[q].c) / 2; typeEntree = 'milieu de la bougie de déplacement ' + c.ut; }
-      const tSignal = bs[q].t + DUREE[c.ut];
-      let touche = false; for (let k = n15 - 1; k >= 0 && M15[k].t >= tSignal; k--) if (M15[k].l <= entree) { touche = true; break; }
-      if (touche) { refus('le prix est déjà revenu sur l\'entrée (' + P(entree) + ') : on ne court pas après.'); continue; }
-      if (prix <= entree) { refus('le prix est déjà sous l\'entrée.'); continue; }
-      const stopPx = e.extreme - 0.1 * atr;
+      // ENTRÉE TOUJOURS EN M15 (jamais sur une bougie H4 / H1) : ordre limite au 50 % du FVG M15 laissé par la
+      // distribution (après la mèche), le premier que le prix rencontrera en revenant ; stop au-delà de la mèche.
+      const tDeb = bs[e.i].t, tFin = bs[q].t + DUREE[c.ut];
+      let iW = -1, bas = Infinity;
+      for (let k = 0; k < n15; k++) { if (M15[k].t < tDeb || M15[k].t >= tFin) continue; if (M15[k].l < bas) { bas = M15[k].l; iW = k; } }
+      if (iW < 0) { refus('bougies M15 de la mèche introuvables.'); continue; }
+      const fvgs = zM15.filter(function (z) { return z.type === 'FVG' && z.role === 'achat' && z.i > iW && (z.bas + z.haut) / 2 < prix; })
+        .filter(function (z) { const mid = (z.bas + z.haut) / 2; for (let k = z.i + 1; k < n15; k++) if (M15[k].l <= mid) return false; return true; })
+        .sort(function (a, b) { return b.haut - a.haut; });
+      if (!fvgs.length) { refus('pas encore de FVG M15 dans la distribution pour placer l\'ordre : on attend.'); continue; }
+      const zE = fvgs[0];
+      const entree = (zE.bas + zE.haut) / 2, typeEntree = 'FVG M15 de la distribution (50 %)';
+      let plusBasM15 = Infinity; for (let k = iW; k <= zE.i; k++) plusBasM15 = Math.min(plusBasM15, M15[k].l);
+      const stopPx = (e.cas === 'manipulation' ? Math.min(e.extreme, plusBasM15) : plusBasM15) - 0.1 * atr15;
       const risque = entree - stopPx;
       if (!(risque > 0.3 * atr15)) { refus('stop trop serré.'); continue; }
+      const k1 = zE.i;
       // objectifs : liquidité au-dessus et projection du range (1 et 2 hauteurs au-dessus du haut du range)
       const portee = rg.haut + 3 * rg.hauteur;
       const toutes = cibles.concat([{ p: rg.haut, nom: mot.haut + ' du range' }, { p: rg.haut + rg.hauteur, nom: 'projection du range (x1)' }, { p: rg.haut + 2 * rg.hauteur, nom: 'projection du range (x2)' }])
@@ -970,7 +987,7 @@ function analyserAMD(d, dc, S, ctx, R) {
       const points = [];
       const vm = volumeMoyen(bs, q, 20);
       if (vm > 0) points.push('volume du déplacement : ' + (bs[q].v / vm).toFixed(1) + ' fois la moyenne');
-      if (k1 !== undefined) points.push('FVG laissé par le déplacement');
+      if (e.fvg) points.push('la mèche est allée chercher un ' + e.fvg.type + ' ' + e.fvg.ut + ' formé avant le range');
       const kz = enKZ(ctx.maintenant); if (kz) points.push('ordre placé en killzone ' + kz.nom);
       if (dc && smt(M15, dc.M15, n15 - 1, 40)) points.push('SMT avec ' + ctx.correle);
       histoire.push('Contexte : ' + recit + '.');
@@ -983,7 +1000,7 @@ function analyserAMD(d, dc, S, ctx, R) {
       res.expireA = new Date(ctx.maintenant + R.dureeOrdre * 3600000).toISOString();
       res.liquidite = e.cas === 'manipulation' ? 'liquidité ' + mot.sous + ' du range prise jusqu\'à ' + P(e.extreme) : 'liquidité au-delà du ' + mot.haut + ' du range';
       res.zone = 'range ' + c.ut + ' ' + P(rg.bas) + ' - ' + P(rg.haut) + ' ; entrée ' + typeEntree;
-      histoire.push('Ordre limite ' + mot.achat + ' à ' + res.entree + ' (' + typeEntree + '), stop ' + res.stop + (e.cas === 'manipulation' ? ' au-delà de la mèche' : ' au-delà du milieu du range') +
+      histoire.push('Ordre limite ' + mot.achat + ' à ' + res.entree + ' (' + typeEntree + '), stop ' + res.stop + (e.cas === 'manipulation' ? ' au-delà de la mèche' : ' au-delà de l\'origine de la cassure (M15)') +
         ', TP1 ' + tp1.nom + ' ' + res.tp1 + ' (' + res.rr1 + 'R)' + (tp2 ? ', TP2 ' + tp2.nom + ' ' + res.tp2 + ' (' + res.rr2 + 'R)' : '') + '.');
       return res;
     }

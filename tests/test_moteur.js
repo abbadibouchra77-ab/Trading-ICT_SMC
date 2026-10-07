@@ -121,9 +121,13 @@ function grapheAMD(suite) {
 }
 test('AMD : mèche(s) sous le range puis déplacement haussier avec volume = manipulation + distribution', function () {
   const bs = grapheAMD([[100.4, 100.6, 99.2, 100.3], [100.3, 100.5, 99.3, 100.2], [100.2, 102.4, 100.1, 102.3, 300], [102.3, 102.9, 102.6, 102.8]]);
-  const e = M.amdAchat(bs, 'M15', 1, 10);
+  // un FVG haussier formé AVANT le range, que la longue mèche va chercher
+  const fvgAvant = [{ type: 'FVG', role: 'achat', ut: 'H1', bas: 99.0, haut: 99.6, t: bs[0].t - 3600000 }];
+  const e = M.amdAchat(bs, 'M15', 1, 10, fvgAvant);
   assert.ok(e.length && e[0].cas === 'manipulation' && e[0].nbMeches === 2, JSON.stringify(e.map(function (x) { return x.cas + x.nbMeches; })));
   assert.ok(Math.abs(e[0].extreme - 99.2) < 1e-9, 'stop de référence : la plus basse des mèches');
+  // sans FVG avant le range : pas une AMD de manipulation
+  assert.ok(!M.amdAchat(bs, 'M15', 1, 10, []).some(function (x) { return x.cas === 'manipulation'; }), 'la mèche doit aller chercher un FVG formé avant le range');
 });
 test('AMD : cassure franche du haut du range par une bougie pleine = continuation', function () {
   const bs = grapheAMD([[100.4, 102.7, 100.3, 102.6], [102.6, 102.9, 102.5, 102.8]]);
