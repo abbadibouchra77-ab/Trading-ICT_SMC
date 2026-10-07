@@ -40,10 +40,12 @@ const DEFAUT = {
   fenetreBos: 192,      // le BOS doit venir dans les 192 bougies M15 après le MSS
   oteBandeMin: 50, oteBandeMax: 78,   // mode 'ote' : bande de retracement de la jambe complète où doit se trouver le 50 % du FVG
   confirmeRetrace: 0.2, // mode 'ote' : la jambe est terminée quand le prix a retracé 20 % de sa longueur
+  oteZones: 'fvg',      // mode 'ote' : zones d'entrée dans la bande OTE : 'fvg', 'ob' ou 'fvg+ob'
   fvgOteMinAtr: 0,      // mode 'ote' : le FVG retenu fait au moins ce multiple de l'ATR M15 (écarte les micro-FVG)
   jambeMinAtr: 3,       // mode 'ote' : la jambe doit mesurer au moins 3 ATR M15 avant qu'on trace son OTE
   fenetreJambe: 96,     // mode 'ote' : la jambe doit se terminer dans les 96 bougies M15
   poiLive: false,       // mode 'ote' : la POI HTF (FVG) est suivie EN DIRECT dès l'ouverture de sa 3e bougie, sans attendre la clôture
+  annulerSiCible: true, // un ordre limite est ANNULÉ si le prix touche la cible (ou le stop) avant d'être rempli
   mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
   sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
   sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
@@ -334,7 +336,15 @@ function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
 function ordreOte(bs, iBas, r, hiR, P, atrR) {
   const lo = bs[iBas].l, L = hiR - lo;
   let meilleur = null;
-  for (let i = iBas + 2; i <= r; i++) {
+  if (/ob/.test(P.oteZones)) {                                   // order block : dernière bougie baissière avant une bougie qui clôture au-dessus de son plus haut
+    for (let i = iBas; i < r; i++) {
+      if (!(bs[i].c < bs[i].o && bs[i + 1].c > bs[i].h)) continue;
+      const e = (bs[i].l + bs[i].h) / 2, ret = (hiR - e) / L * 100;
+      if (ret < P.oteBandeMin || ret > P.oteBandeMax || !(bs[r].c > e)) continue;
+      if (!meilleur || e > meilleur.e) meilleur = { e: e, i: i + 2, ob: true };
+    }
+  }
+  for (let i = iBas + 2; i <= r && /fvg/.test(P.oteZones); i++) {
     if (!(bs[i].l > bs[i - 2].h)) continue;
     if (bs[i].l - bs[i - 2].h < P.fvgOteMinAtr * atrR) continue;
     const e = (bs[i - 2].h + bs[i].l) / 2, ret = (hiR - e) / L * 100;
@@ -399,6 +409,21 @@ function setupsOte(bs, H, atrs, P, depuis, jusqua) {
   return out;
 }
 
+// Un ordre limite qui n'a pas été rempli quand le prix atteint la cible (ou le stop) est caduc : le mouvement est parti sans nous.
+// Renvoie true si l'ordre doit être annulé. dir = +1 achat, -1 vente (prix réels, ordre placé à la clôture de la bougie k0 - 1).
+function ordreCaduc(M15, k0, sig, dirSens, nBougies) {
+  const dir = dirSens === 'buy' ? 1 : -1;
+  for (let i = k0; i < Math.min(M15.length, k0 + nBougies); i++) {
+    const b = M15[i];
+    const rempli = dir > 0 ? b.low <= sig.entree : b.high >= sig.entree;
+    if (rempli) return false;                                          // rempli d'abord (ou dans la même bougie) : on garde
+    const cible = dir > 0 ? b.high >= sig.tp1 : b.low <= sig.tp1;
+    const stop = dir > 0 ? b.low <= sig.stop : b.high >= sig.stop;
+    if (cible || stop) return true;                                    // parti sans nous
+  }
+  return false;
+}
+
 function backtesterActif(actif, M15, P, depuis, jusqua) {
   const bs = versBs(M15), bm = miroir(bs);
   const H = versBs(P.htf === 15 ? M15 : regrouper(M15, P.htf)), Hm = miroir(H);
@@ -424,6 +449,7 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     if (actif.spread > P.spreadMaxR * (entree - s.stop)) continue;
     const sig = { sens: S > 0 ? 'buy' : 'sell', entree: S * entree, stop: S * s.stop, tp1: S * s.tp1, tp2: s.tp2 === null ? null : S * s.tp2,
       expireA: new Date(s.t + (s.expireBars || P.dureeOrdre) * 15 * 60000).toISOString() };
+    if (P.annulerSiCible && ordreCaduc(M15, s.k + 1, sig, sig.sens, s.expireBars || P.dureeOrdre)) continue;
     const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
     trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
