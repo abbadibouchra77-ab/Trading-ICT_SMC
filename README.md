@@ -17,10 +17,11 @@ Il ne trade que les setups **A++** (note ≥ 20), avec quelques interdits absolu
 3. **Confirmation H1** : rejet par grande mèche, CHoCH H1 ou FVG H1 au moment du balayage.
 4. **Entrée M15** en killzone (Londres 02h-05h, New York 07h-11h, heure de New York ; cryptos 24h/24) :
    - balayage d'une liquidité (session Asie / Londres, plus bas de la veille, creux égaux, bord de range, ligne de tendance…),
-     à l'extrême de la structure, avec une mèche qui revient ;
+     à l'extrême de la structure, avec une mèche qui revient, ou liquidity grab (fausse cassure reprise en 3 bougies au plus) ;
    - MSS en clôture avec un vrai déplacement (grande bougie) ;
    - **ordre limite au 50 % du FVG** laissé par le déplacement (sinon BPR, sinon OB), annulé à la fin de la killzone.
 5. **Bonus** : Power of 3 (manipulation sous l'ouverture de minuit NY), Judas swing sur l'Asie, liquidité cumulée,
+   inducement pris avant le vrai balayage, OB + FVG superposés,
    volume, **SMT** avec l'actif corrélé, divergence RSI, RSI qui sort de sa zone neutre.
 6. **Interdits absolus** : jamais sans balayage de liquidité, jamais contre le biais HTF sans balayage d'une liquidité
    HTF dans une zone HTF, jamais dans un range non balayé, jamais sous 2R, jamais dans un mouvement déjà tradé ou terminé.

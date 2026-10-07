@@ -348,6 +348,10 @@ function dejaPris(nv, series) {
 }
 // Balayages côté bas : mèche sous un niveau encore intact, puis clôture qui revient au-dessus
 // (même bougie ou la suivante). Ce n'est pas une acceptation.
+// Liquidity grab (fausse cassure) : le prix CLÔTURE sous le niveau pour faire croire à une cassure,
+// puis le reprend en 3 bougies au plus, sans s'installer dessous (au plus 2 clôtures dessous,
+// jamais de clôture à plus de 1 ATR sous le niveau ; la mèche, elle, peut aller loin).
+// C'est le piège : les vendeurs entrent sur la fausse cassure, la Smart Money achète.
 function balayagesBas(bs, niveaux, atr, depuis) {
   const out = [];
   for (let i = Math.max(1, depuis); i < bs.length; i++) {
@@ -359,11 +363,21 @@ function balayagesBas(bs, niveaux, atr, depuis) {
       let pris = false;
       for (let q = i - 1; q >= 0 && bs[q].t >= nv.t0; q--) if (bs[q].l < prixNiveau(nv, bs[q].t)) { pris = true; break; }
       if (pris) continue; // déjà pris avant : il n'y a plus de liquidité
-      let retour = null;
+      let retour = null, grab = false;
       if (b.c > p) retour = i;
       else if (i + 1 < bs.length && bs[i + 1].c > p && bs[i + 1].l >= b.l - 0.5 * atr) retour = i + 1;
+      else {
+        // liquidity grab : reprise du niveau en 3 bougies au plus, sans acceptation dessous
+        let dessous = 0;
+        for (let q = i; q < Math.min(bs.length, i + 4); q++) {
+          if (bs[q].c < p - 1.0 * atr) break; // clôture loin sous le niveau : vraie cassure
+          if (bs[q].c > p) { if (q > i) { retour = q; grab = true; } break; }
+          if (++dessous > 2) break;
+        }
+      }
       if (retour === null) continue;
-      out.push({ i: i, iRetour: retour, meche: Math.min(b.l, bs[retour].l), niveau: nv });
+      let meche = Infinity; for (let q = i; q <= retour; q++) meche = Math.min(meche, bs[q].l);
+      out.push({ i: i, iRetour: retour, meche: meche, niveau: nv, grab: grab });
     }
   }
   return out;
@@ -372,8 +386,9 @@ function balayagesBas(bs, niveaux, atr, depuis) {
 function grouperBalayages(bals) {
   const g = {};
   for (const s of bals) {
-    if (!g[s.i]) g[s.i] = { i: s.i, iRetour: s.iRetour, meche: s.meche, niveaux: [] };
+    if (!g[s.i]) g[s.i] = { i: s.i, iRetour: s.iRetour, meche: s.meche, niveaux: [], grab: true };
     g[s.i].niveaux.push(s.niveau); g[s.i].iRetour = Math.min(g[s.i].iRetour, s.iRetour);
+    g[s.i].meche = Math.min(g[s.i].meche, s.meche); g[s.i].grab = g[s.i].grab && s.grab; // grab seulement si aucun simple balayage
   }
   return Object.keys(g).map(function (k) { return g[k]; }).sort(function (a, b) { return a.i - b.i; });
 }
@@ -381,6 +396,24 @@ function grouperBalayages(bals) {
 function estExtreme(bs, i, meche, N, tol) {
   let mn = Infinity; for (let q = Math.max(0, i - N); q < i; q++) mn = Math.min(mn, bs[q].l);
   return meche <= mn + tol;
+}
+// Inducement (le piège) : avant le vrai balayage, le prix a pris un petit creux interne
+// (au-dessus de la vraie liquidité) pour attirer les acheteurs trop tôt ; leurs stops sont
+// ensuite pris par le vrai balayage.
+function inducement(bs, iBal, meche, atr) {
+  const creux = pivots(bs, 1).filter(function (p) { return p.type === 'L' && p.i >= iBal - 40 && p.i <= iBal - 3 && p.p > meche + 0.2 * atr; });
+  for (let k = creux.length - 1; k >= 0; k--) {
+    const c = creux[k];
+    for (let q = c.i + 2; q < iBal; q++) if (bs[q].l < c.p) return c;
+  }
+  return null;
+}
+// OB + FVG superposés : un OB (ou breaker) et un FVG (ou IFVG / BPR) qui se chevauchent = zone à fort potentiel.
+function obEtFvgSuperposes(zs) {
+  const obs = zs.filter(function (z) { return z.type === 'OB' || z.type === 'Breaker'; });
+  const fvgs = zs.filter(function (z) { return z.type === 'FVG' || z.type === 'IFVG' || z.type === 'BPR'; });
+  for (const a of obs) for (const b of fvgs) if (Math.min(a.haut, b.haut) > Math.max(a.bas, b.bas)) return a.type + ' ' + a.ut + ' + ' + b.type + ' ' + b.ut;
+  return null;
 }
 function importance(nv) {
   if (nv.ut === 'MN' || nv.ut === 'W1') return 4;
@@ -566,6 +599,8 @@ function analyserCote(d, dc, S, ctx, R) {
   const zonesHTF = zD1.concat(zW1).filter(function (z) { return dansZ(z, 0.3 * atr4); });
   if (zonesH4.length) pts(2, 'zone H4 : ' + uniques(zonesH4.map(function (z) { return z.type; })).join(', '));
   if (zonesHTF.length) pts(1, 'zone HTF : ' + uniques(zonesHTF.map(function (z) { return z.type + ' ' + z.ut; })).join(', '));
+  const superposes = obEtFvgSuperposes(zonesH4.concat(zH1.filter(function (z) { return dansZ(z, 0.2 * atr4); })));
+  if (superposes) pts(1, 'OB + FVG superposés (' + superposes + ')');
 
   // Contre le biais HTF : seulement si la Smart Money a pris une liquidité HTF dans une zone HTF
   if (biais === 'contraire') {
@@ -577,7 +612,9 @@ function analyserCote(d, dc, S, ctx, R) {
   // Qualité du balayage M15
   const b0 = M15[bal.i];
   const genres = bal.niveaux.map(function (x) { return x.genre; });
-  pts(1, 'balayage M15 : ' + genres.slice(0, 3).join(' + '));
+  pts(1, (bal.grab ? 'liquidity grab M15 (fausse cassure reprise) : ' : 'balayage M15 : ') + genres.slice(0, 3).join(' + '));
+  const idm = inducement(M15, bal.i, bal.meche, atr15);
+  if (idm) pts(1, 'inducement pris avant le vrai balayage (' + P(idm.p) + ')');
   if (bal.niveaux.length >= 2 || bal.niveaux.some(function (x) { return importance(x) >= 2; })) pts(1, 'liquidité cumulée / importante balayée');
   if (Math.min(b0.o, b0.c) - b0.l >= 0.4 * (b0.h - b0.l)) pts(1, 'grande mèche de balayage');
   // Power of 3 : manipulation sous l'ouverture de minuit (NY) ; Judas swing sur l'Asie
@@ -695,5 +732,5 @@ function analyserActif(symbole, brut, correle, maintenant, etat, options) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { analyserActif, preparerBougies, structure, zones, pivots, rsiSerie, atrSerie, lireUT, balayagesBas, niveauxPivots, miroir, smt, sessions, ny, REGLAGES };
+  module.exports = { analyserActif, preparerBougies, structure, zones, pivots, rsiSerie, atrSerie, lireUT, balayagesBas, niveauxPivots, miroir, smt, sessions, ny, inducement, obEtFvgSuperposes, REGLAGES };
 }

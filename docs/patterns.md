@@ -13,13 +13,14 @@ pattern dans `src/moteur.js` et comment le bot l'utilise.
 | 1 | Break of Structure (BOS) | `structure` | Jambe H4 (le déplacement doit casser la structure) |
 | 2 | Equal Highs / Equal Lows (EQH / EQL) | `niveauxPivots` | Liquidité à balayer ; « liquidité cumulée » |
 | 2 | Liquidity Sweep | `balayagesBas`, `estExtreme` | **Obligatoire** : point A H4 et balayage M15 (mèche au-delà, clôture qui revient) |
-| 2 | Liquidity Grab (piège à liquidité) | `balayagesBas`, `grouperBalayages` | Plusieurs liquidités prises d'un coup = points en plus |
+| 2 | Liquidity Grab (piège à liquidité) | `balayagesBas` (cas `grab`) | Fausse cassure : clôture au-delà du niveau puis reprise en 3 bougies au plus, sans acceptation ; compte comme prise de liquidité |
+| 2 | Inducement (piège interne) | `inducement` | +1 si un petit creux / sommet interne a été pris avant le vrai balayage |
 | 3 | Bullish / Bearish Order Block | `zones` (type `OB`) | Zone H4 / HTF, entrée de secours si pas de FVG |
 | 3 | Mitigation d'OB | `zones` (`touches`), entrée limite | L'ordre limite attend le retour dans la zone |
 | 3 | OB en confluence | `zones` H4 + D1 / W1 | Points « zone H4 » et « zone HTF » |
 | 4 | Bullish / Bearish FVG | `zones` (type `FVG`) | Entrée : **ordre limite au 50 % du FVG** du déplacement |
 | 4 | FVG Mitigation | entrée limite | L'ordre est exécuté au retour dans le FVG |
-| 4 | FVG en confluence (FVG + OB) | `zones` | Points zone H4 / HTF |
+| 4 | FVG en confluence (FVG + OB) | `obEtFvgSuperposes` | +1 si un OB (ou breaker) et un FVG (ou IFVG / BPR) H4 / H1 se chevauchent au balayage |
 | 5 | Imbalance (déséquilibre) | déplacement (`corps` ≥ 1,5 × moyenne) + FVG | MSS M15 obligatoire avec déplacement ; déplacement H4 avec FVG |
 | 5 | Imbalance en confluence | `zones` (FVG, BPR) | Points zone |
 | 6 | Premium / Discount / Équilibre (50 %) | dealing range Daily, `retracement` | Achat en décote, vente en prime ; OTE 0,62-0,79 |

@@ -25,7 +25,11 @@ function histoireAchat(o) {
   g.vers(P0 - 20, 4, 0.3).vers(P0 - 12, 4, 0.3).vers(P0 - 20, 4, 0.3).vers(P0 - 12, 4, 0.3);
   g.vers(P0 - 16, 4, 0.3).vers(P0 - 12, 4, 0.3).vers(P0 - 17, 2, 0.3).vers(P0 - 19.5, 2, 0.2);
   if (o.sansBalayage) return g;
-  g.ajoute(P0 - 19.5, P0 - 19.2, P0 - 27, P0 - 19, 900);     // balayage : grande mèche, clôture au-dessus
+  if (o.grab) {
+    // liquidity grab : clôture SOUS les creux égaux (fausse cassure), puis reprise du niveau
+    g.ajoute(P0 - 19.5, P0 - 19.4, P0 - 23, P0 - 22, 700);
+    g.ajoute(P0 - 22, P0 - 18.8, P0 - 27, P0 - 19, 900);
+  } else g.ajoute(P0 - 19.5, P0 - 19.2, P0 - 27, P0 - 19, 900);     // balayage : grande mèche, clôture au-dessus
   g.ajoute(P0 - 19, P0 - 14.8, P0 - 19.3, P0 - 15, 500);     // déplacement...
   g.ajoute(P0 - 15, P0 - 8.5, P0 - 15.2, P0 - 9, 800);       // ... MSS (clôture au-dessus du sommet)
   g.ajoute(P0 - 9, P0 - 5.5, P0 - 9.5, P0 - 6, 400);         // FVG du déplacement : entre -19 et -15,2
@@ -56,6 +60,33 @@ test('Setup A++ d\'achat : ordre limite au FVG', function () {
   assert.strictEqual(r.killzone, 'Londres');
   assert.strictEqual(M.ny(Date.parse(r.expireA)).hm, 500, 'l\'ordre expire à la fin de la killzone de Londres (05h NY)');
   console.log('\n--- Lecture du bot (achat) ---\n' + r.lecture + '\nNote : ' + r.note + '\n  ' + r.confirmations.join('\n  ') + '\n');
+});
+
+test('Liquidity grab (clôture sous le niveau puis reprise) : reconnu comme prise de liquidité', function () {
+  const r = analyser(histoireAchat({ grab: true }).b);
+  assert.strictEqual(r.action, 'trader', r.raison);
+  assert.ok(r.confirmations.some(function (x) { return /liquidity grab/.test(x); }), r.confirmations.join(' | '));
+  assert.ok(r.stop < histoireAchat().P0 - 27, 'stop sous le plus bas du grab');
+});
+
+test('Une vraie cassure (le prix s\'installe sous le niveau) n\'est pas un grab', function () {
+  const t0 = Date.parse('2026-01-05T00:00:00Z');
+  const bs = []; for (let i = 0; i < 30; i++) bs.push({ t: t0 + i * 900000, o: 100, h: 100.5, l: 99.5, c: 100, v: 0 });
+  [[100, 100.2, 98.8, 99.0], [99.0, 99.2, 98.5, 98.7], [98.7, 98.9, 98.3, 98.5], [98.5, 98.8, 98.2, 98.4], [98.4, 99.8, 98.3, 99.7]]
+    .forEach(function (x, k) { bs.push({ t: t0 + (30 + k) * 900000, o: x[0], h: x[1], l: x[2], c: x[3], v: 0 }); });
+  const niv = [{ p: 99.5, cote: 'L', genre: 'creux égaux', ut: 'M15', t0: t0, touches: 2, ligne: null }];
+  assert.strictEqual(M.balayagesBas(bs, niv, 1, 30).length, 0, '4 clôtures sous le niveau : acceptation, pas un piège');
+});
+
+test('Inducement et OB + FVG superposés', function () {
+  const t0 = Date.parse('2026-01-05T00:00:00Z');
+  const px = [10, 9, 8, 9, 10, 9, 7.5, 8.5, 9, 8, 6, 5, 7, 8];
+  const bs = px.map(function (c, i) { return { t: t0 + i * 900000, o: c, h: c + 0.3, l: c - 0.3, c: c, v: 0 }; });
+  // creux interne à 7,2 (bougie 6) pris par la bougie 10, avant le vrai balayage à 4,7 (bougie 11)
+  const idm = M.inducement(bs, 11, 4.7, 1);
+  assert.ok(idm && Math.abs(idm.p - 7.2) < 1e-9, 'inducement trouvé : ' + JSON.stringify(idm));
+  assert.strictEqual(M.obEtFvgSuperposes([{ type: 'OB', ut: 'H4', bas: 10, haut: 12 }, { type: 'FVG', ut: 'H4', bas: 11, haut: 13 }]), 'OB H4 + FVG H4');
+  assert.strictEqual(M.obEtFvgSuperposes([{ type: 'OB', ut: 'H4', bas: 10, haut: 12 }, { type: 'FVG', ut: 'H4', bas: 12.5, haut: 13 }]), null);
 });
 
 test('Le même graphique retourné : vente symétrique', function () {
