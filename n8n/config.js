@@ -17,11 +17,10 @@ return [{ json: {
   rrMin: 2,              // objectif minimum : 2R
   maxPertesJour: 2,      // au plus 2 pertes par jour (jour de Paris)
   maxPositionsBot: 3,    // sécurité : au plus 3 trades SMC Vision ouverts en même temps
-  noteMin: 20,           // note minimale A++ (calibrée ensuite par le backtest)
   commentaire: 'SMC-Vision',
   label: 'SMCV',         // étiquette des ordres (pour que le stop suiveur des autres bots ne les gère pas)
   // devise = monnaie de cotation (conversion du risque en dollars) ; correle = actif comparé pour la SMT ;
-  // crypto = tradé 24h/24 (les autres seulement en killzone Londres / New York matin)
+  // tous les actifs sont tradés 24h/24 ; crypto = ordre limite valable 3 h (comme hors killzone)
   actifs: [
     { symbol: 'XAUUSD', nom: 'Or', devise: 'USD', correle: 'XAGUSD' },
     { symbol: 'XAGUSD', nom: 'Argent', devise: 'USD', correle: 'XAUUSD' },

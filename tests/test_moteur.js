@@ -110,10 +110,12 @@ test('Entrée déjà touchée : on ne court pas après le prix', function () {
   assert.ok(/déjà revenu sur l'entrée/.test(r.raison), r.raison);
 });
 
-test('Hors killzone : pas d\'ordre (forex / indices / métaux)', function () {
+test('Hors killzone : le bot trade quand même (24h/24), ordre valable 3 h', function () {
   const r = analyser(histoireAchat({ heureBalayage: 17 }).b); // 17h UTC = 13h New York
-  assert.strictEqual(r.action, 'attendre');
-  assert.ok(/hors killzone/.test(r.raison), r.raison);
+  assert.strictEqual(r.action, 'trader', r.raison);
+  assert.strictEqual(r.killzone, 'hors killzone');
+  const dureeH = (Date.parse(r.expireA) - S.maintenantApres(histoireAchat({ heureBalayage: 17 }).b)) / 3600000;
+  assert.ok(Math.abs(dureeH - 3) < 0.01, 'expire au bout de 3 h : ' + dureeH);
 });
 
 test('Crypto : 24h/24, même hors killzone', function () {

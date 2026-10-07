@@ -18,7 +18,7 @@ const DUREES = { M15: M15, H1: 3600000, H4: 4 * 3600000, D1: 86400000, W1: 7 * 8
 // des 8 bougies précédentes au moins (la réaction M15, réglage reactionMin), et (hors cryptos) l'heure dans une killzone.
 // tests/test_backtest.js vérifie que ce filtre ne change aucune décision.
 function preFiltre(bs, n, atr, crypto, maintenant) {
-  if (!crypto) {
+  if (!crypto && moteur.REGLAGES.killzoneObligatoire) {
     const h = moteur.ny(maintenant).hm;
     if (!moteur.REGLAGES.killzones.some(function (k) { return h >= k.debut && h < k.fin; })) return false;
   }

@@ -31,8 +31,9 @@ const REGLAGES = {
   reactionMin: 8,          // la réaction M15 est le plus bas (haut) d'au moins 8 bougies
   fenetreBalayageM15: 48,  // balayage M15 cherché sur les 12 dernières heures
   fenetreLegH4: 60,        // point B H4 cherché sur les 60 dernières bougies H4 (H1 : 80)
-  dureeOrdreCrypto: 3,     // cryptos : l'ordre limite expire au bout de 3 h
-  // Killzones (heure de New York) : Londres 02h-05h, New York matin 07h-11h. Cryptos : 24h/24.
+  dureeOrdre: 3,           // hors killzone, l'ordre limite expire au bout de 3 h (en killzone : à la fin de la killzone)
+  killzoneObligatoire: false, // bot 24h/24 sur tous les actifs (demande du 07/10/2026) ; la killzone reste une confirmation
+  // Killzones (heure de New York) : Londres 02h-05h, New York matin 07h-11h (confirmation, pas obligatoire).
   killzones: [{ nom: 'Londres', debut: 200, fin: 500 }, { nom: 'New York matin', debut: 700, fin: 1100 }],
   minBougies: { M15: 150, H1: 100, H4: 80, D1: 30, W1: 10, MN: 3 }
 };
@@ -759,7 +760,7 @@ function analyserCote(d, dc, S, ctx, R) {
     const boite = rangeH1(M15[i0].t);
     if (boite && M15[iMSS].c <= boite.haut) return stop('le marché est en range H1 (' + P(boite.bas) + ' - ' + P(boite.haut) + ') et le MSS n\'en est pas sorti : entrée prématurée, on attend.');
     const kz = enKZ(M15[iMSS].t);
-    if (!ctx.crypto && (!kz || !enKZ(ctx.maintenant))) return stop('hors killzone (Londres 02h-05h, New York 07h-11h, heure de NY) : pas d\'ordre.');
+    if (R.killzoneObligatoire && !ctx.crypto && (!kz || !enKZ(ctx.maintenant))) return stop('hors killzone (Londres 02h-05h, New York 07h-11h, heure de NY) : pas d\'ordre.');
 
     // Entrée : ordre limite au FVG (sinon BPR, sinon OB) du déplacement
     let B15 = -Infinity; for (let j = iMSS; j < n15; j++) B15 = Math.max(B15, M15[j].h);
@@ -855,10 +856,10 @@ function analyserCote(d, dc, S, ctx, R) {
   res.tp1 = P(t.tp1.p); res.tp1Nom = t.tp1.nom; res.rr1 = +((t.tp1.p - t.entree) / t.risque).toFixed(2);
   res.tp2 = t.tp2 ? P(t.tp2.p) : null; res.tp2Nom = t.tp2 ? t.tp2.nom : null; res.rr2 = t.tp2 ? +((t.tp2.p - t.entree) / t.risque).toFixed(2) : null;
   res.scenario = k.type + ' ' + k.ut; res.pointA = P(k.A); res.pointB = P(k.B); res.cleMouvement = k.cle + '|' + res.sens + '#M15|' + M15[t.iA].t + '|' + res.sens;
-  res.killzone = t.kz ? t.kz.nom : 'hors killzone (crypto 24h/24)';
+  res.killzone = t.kz ? t.kz.nom : 'hors killzone';
   // L'ordre limite expire à la fin de la killzone en cours (cryptos : au bout de quelques heures)
-  let expire = ctx.maintenant + R.dureeOrdreCrypto * 3600000;
-  if (!ctx.crypto && t.kz) { expire = ctx.maintenant; while (ny(expire).hm < t.kz.fin && expire < ctx.maintenant + 6 * 3600000) expire += 5 * 60000; }
+  let expire = ctx.maintenant + R.dureeOrdre * 3600000;
+  if (!ctx.crypto && t.kz && enKZ(ctx.maintenant)) { expire = ctx.maintenant; while (ny(expire).hm < t.kz.fin && expire < ctx.maintenant + 6 * 3600000) expire += 5 * 60000; }
   res.expireA = new Date(expire).toISOString();
   res.biais = biais;
   res.liquidite = (t.bal ? t.bal.niveaux.map(function (x) { return x.genre; }).join(' + ') + ' balayé à ' + P(t.bal.meche) : 'réaction M15 à ' + P(t.A15)) +
