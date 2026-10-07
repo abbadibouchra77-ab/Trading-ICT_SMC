@@ -149,6 +149,33 @@ function structure(bs, L) {
   }
   return { pivots: piv, evts: evts, tendance: tendance };
 }
+// Structure de swing (pour le H4) : après une cassure haussière, la direction reste haussière tant que le
+// creux d'où est parti le mouvement (le « strong low ») n'est pas cassé en clôture ; les petits creux internes
+// d'un retracement ne changent pas la direction. Symétrique à la baisse.
+function directionSwing(bs, L) {
+  const piv = pivots(bs, L);
+  let dir = 0, sh = null, sl = null, k = 0, fort = null, dernier = null;
+  for (let i = 0; i < bs.length; i++) {
+    while (k < piv.length && piv[k].i + L <= i) { if (piv[k].type === 'H') sh = piv[k]; else sl = piv[k]; k++; }
+    const c = bs[i].c;
+    if (dir >= 0 && sh && c > sh.p) { // cassure haussière : le strong low = plus bas entre le sommet cassé et la cassure
+      let mn = Infinity; for (let q = sh.i; q <= i; q++) mn = Math.min(mn, bs[q].l);
+      dernier = { i: i, dir: 1, type: dir === 1 ? 'BOS' : 'CHoCH', niveau: sh.p }; dir = 1; fort = mn; sh = null; continue;
+    }
+    if (dir <= 0 && sl && c < sl.p) {
+      let mx = -Infinity; for (let q = sl.i; q <= i; q++) mx = Math.max(mx, bs[q].h);
+      dernier = { i: i, dir: -1, type: dir === -1 ? 'BOS' : 'CHoCH', niveau: sl.p }; dir = -1; fort = mx; sl = null; continue;
+    }
+    if (dir === 1 && c < fort) { // le strong low est cassé : changement de direction
+      let mx = -Infinity; for (let q = Math.max(0, i - 60); q <= i; q++) mx = Math.max(mx, bs[q].h);
+      dernier = { i: i, dir: -1, type: 'CHoCH', niveau: fort }; dir = -1; fort = mx; sl = null;
+    } else if (dir === -1 && c > fort) {
+      let mn = Infinity; for (let q = Math.max(0, i - 60); q <= i; q++) mn = Math.min(mn, bs[q].l);
+      dernier = { i: i, dir: 1, type: 'CHoCH', niveau: fort }; dir = 1; fort = mn; sh = null;
+    }
+  }
+  return dernier;
+}
 // Lecture d'une unité de temps : tendance (plus hauts / plus bas + dernière cassure) et range.
 function lireUT(bs, L, nRange) {
   const st = structure(bs, L), n = bs.length;
@@ -560,7 +587,6 @@ function analyserCote(d, dc, S, ctx, R) {
   if (dol) histoire.push('Point B visé (DOL) : ' + dol.genre + ' à ' + P(prixNiveau(dol, ctx.maintenant)) + '.');
 
   // ---------------- 2. CONTEXTES H4 et H1 ----------------
-  const l4 = lireUT(H4, 2, 20);
   const UTS = [
     { ut: 'H4', bs: H4, atr: atr4, z: zH4, recul: 30, fenetreLeg: R.fenetreLegH4, zonesUT: ['H4', 'D1', 'W1'] },
     { ut: 'H1', bs: H1, atr: atr1, z: zH1, recul: 48, fenetreLeg: 80, zonesUT: ['H1', 'H4', 'D1', 'W1'] }
@@ -646,16 +672,18 @@ function analyserCote(d, dc, S, ctx, R) {
     return null;
   }
 
-  // Direction du H4 : une jambe H4 valide (structure cassée, point A tenu) donne la direction,
-  // même pendant son retracement ; sinon la lecture des sommets / creux.
+  // Direction : la dernière cassure de structure (BOS / CHoCH). On ne trade que dans ce sens.
+  //  - H4 : structure de swing (le retracement vers l'OTE ne change pas la direction tant que le strong low tient) ;
+  //  - H1 : la dernière cassure, même interne (un CHoCH vendeur H1 interdit d'acheter jusqu'à une nouvelle cassure acheteuse).
+  // Après un BOS / CHoCH vendeur, le bot n'achète pas : il attend une nouvelle cassure acheteuse
+  // (et la lecture du miroir cherche, elle, la vente dans le sens de cette cassure).
+  const e4 = directionSwing(H4, 2), e1 = structure(H1, 2).evts.slice(-1)[0] || null;
+  function cassureTxt(e, ut) { return e ? e.type + ' ' + (e.dir === 1 ? mot.haussier : mot.baissier) + ' ' + ut + ' (' + P(e.niveau) + ')' : 'aucune cassure ' + ut; }
+  histoire.push('Dernière cassure de structure : ' + cassureTxt(e4, 'H4') + ' ; ' + cassureTxt(e1, 'H1') + '.');
+  if (e4 && e4.dir === -1) { raisons.push('Dernière cassure de structure H4 : ' + cassureTxt(e4, 'H4') + ' : pas de ' + mot.achat + '.'); return res; }
+  if (e1 && e1.dir === -1) { raisons.push('Dernière cassure de structure H1 : ' + cassureTxt(e1, 'H1') + ' : on attend une cassure ' + mot.haussiere + ' H1.'); return res; }
   const contextes = [], echecs = [];
-  let dirH4 = l4.tendance;
   for (const c of UTS) {
-    if (c.ut === 'H1') {
-      if (contextes.some(function (x) { return x.ut === 'H4' && x.type === 'tendance'; })) dirH4 = 'haussier';
-      histoire.push('Direction H4 : ' + (dirH4 === 'range' ? 'pas de direction nette' : T(dirH4)) + '.');
-      if (dirH4 === 'baissier') { echecs.push('H1 : contre la direction du H4, ignoré'); continue; }
-    }
     const t = contexteTendance(c);
     if (t.echec) echecs.push('tendance ' + c.ut + ' : ' + t.echec); else contextes.push(t);
     const a = contexteAMD(c); if (a) contextes.push(a);
