@@ -378,7 +378,7 @@ function setupsOte(bs, H, atrs, P, depuis, jusqua) {
           if (risque >= P.stopMinAtr * atr && liq.length) {
             const tp1 = liq[0] - P.margeCible * atr;
             if ((tp1 - o.e) / risque >= P.rrMin)
-              out.push({ k: k, t: t, groupe: z, entree: o.e, stop: stop, tp1: tp1, tp2: null, type: g.etape === 1 ? 'FVG OTE (MSS)' : 'FVG OTE (BOS)', atr: atr, zone: z, mss: null, lect: null, expireBars: P.dureeSniper });
+              out.push({ k: k, t: t, groupe: z, entree: o.e, stop: stop, tp1: tp1, tp2: null, type: g.etape === 1 ? 'FVG OTE (MSS)' : 'FVG OTE (BOS)', atr: atr, zone: z, mss: null, lect: null, ote: { iBas: g.iBas, lo: lo, hi: g.hi, fi: o.i, k: k }, expireBars: P.dureeSniper });
           }
         }
         if (g.etape === 1 && P.bos) z.leg = { etape: 2, iBas: g.iBas, origine: g.origine, hi: g.hi, from: k, k0: k };
@@ -426,6 +426,8 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
     trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
       mss: !s.mss ? null : { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
+      ote: s.ote ? { tOrigine: bs[s.ote.iBas].t, prixOrigine: S * s.ote.lo, prixExtreme: S * s.ote.hi, tFvg: bs[s.ote.fi - 2].t, fvgBas: Math.min(S * (S > 0 ? bs : bm)[s.ote.fi - 2].h, S * (S > 0 ? bs : bm)[s.ote.fi].l), fvgHaut: Math.max(S * (S > 0 ? bs : bm)[s.ote.fi - 2].h, S * (S > 0 ? bs : bm)[s.ote.fi].l), tOrdre: bs[s.ote.k].t,
+        bandeA: S * (s.ote.hi - 0.01 * P.oteBandeMin * (s.ote.hi - s.ote.lo)), bandeB: S * (s.ote.hi - 0.01 * P.oteBandeMax * (s.ote.hi - s.ote.lo)) } : null,
       lecture: s.lect ? lecture(S, S > 0 ? bs : bm, s.lect) : null,
       zoneHtf: { genre: s.zone.genre, bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
       f: { risqueAtr: +((entree - s.stop) / s.atr).toFixed(2), rrTp1: +((s.tp1 - entree) / (entree - s.stop)).toFixed(2) } }, issue));
