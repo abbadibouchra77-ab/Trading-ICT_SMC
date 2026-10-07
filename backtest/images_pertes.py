@@ -100,4 +100,5 @@ def main():
         plt.close(fig)
         print(nom, len(pertes))
 
-main()
+if __name__ == "__main__":
+    main()

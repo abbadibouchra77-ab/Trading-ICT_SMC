@@ -49,7 +49,7 @@ if (!isMainThread) {
   const res = backtesterActif(w.actif, brut, brutC, { spread: w.actif.spread, depuis: w.depuis, jusqua: w.jusqua, preFiltre: w.preFiltre });
   res.secondes = Math.round((Date.now() - t0) / 1000);
   parentPort.postMessage(res);
-} else {
+} else if (require.main === module) {
   // ---- programme principal ----
   const args = {};
   for (let i = 2; i < process.argv.length; i++) {
