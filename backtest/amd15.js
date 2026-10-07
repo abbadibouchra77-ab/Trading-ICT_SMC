@@ -35,7 +35,9 @@ const DEFAUT = {
   sortieCassure: 0.1,               // cas 2 : clôture au-delà du range d'au moins 0,1 ATR
   milieuDistribution: true,         // cas 1 : la distribution clôture au-delà du milieu du range
   entree: 'fvg',                    // 'fvg' (50 % du FVG, sinon 50 % du corps) ou 'corps' (50 % du corps)
-  margeStop: 0.1,                   // marge du stop en ATR
+  stop: 'meche',                    // 'meche' (au-delà de la mèche / bougie de cassure), 'milieu' (cassure : sous le milieu du range), 'range' (au-delà du range entier)
+  stopAtr: 0,                       // distance minimale du stop en ATR M15 (0 = pas de minimum)
+  margeStop: 0.1,                  // marge du stop en ATR
   stopMinAtr: 0.3,                  // stop trop serré en dessous
   rr1: 2, rr2: 3,                   // objectifs en R
   dureeOrdre: 16,                   // l'ordre limite attend 16 bougies (4 h)
@@ -144,7 +146,12 @@ function niveaux(bs, s, k, P) {
     entree = (bs[q + 1].l + bs[q - 1].h) / 2; type = 'FVG 50 %';
   } else { entree = (b.o + b.c) / 2; type = 'corps 50 %'; }
   let bas = s.extreme; for (let i = s.m; i <= k; i++) bas = Math.min(bas, bs[i].l);
-  const stop = bas - P.margeStop * s.atr;
+  // stop non serré : au-delà de la mèche / de la cassure, ou au-delà du range entier (P.stop = 'range'),
+  // et jamais à moins de P.stopAtr ATR de l'entrée (on l'éloigne au lieu de refuser)
+  if (P.stop === 'range') bas = Math.min(bas, s.rg.bas);
+  if (P.stop === 'milieu' && s.cas === 'cassure') bas = Math.min(bas, (s.rg.haut + s.rg.bas) / 2);
+  let stop = bas - P.margeStop * s.atr;
+  if (P.stopAtr) stop = Math.min(stop, entree - P.stopAtr * s.atr);
   const risque = entree - stop;
   if (!(risque >= P.stopMinAtr * s.atr)) return null;
   const prix = bs[k].c;
