@@ -34,6 +34,15 @@ const DEFAUT = {
   zoneMinAtrH: 0,       // taille de la POI HTF au moins ce multiple de l'ATR HTF (0 = aucun minimum)
   zoneMaxAtrH: 0,       // ... et au plus (0 = aucun maximum) : écarte les zones démesurées
   unSeulRetour: false,  // la POI est consommée après son premier retour : sans MSS dans la fenêtre, on n'y revient plus
+  fvgMssChoix: 'dernier', // 'premier' : on entre sur le 1er FVG du déplacement (celui du haut) ; 'dernier' : sur le plus récent
+  bos: false,           // après le MSS, on attend un BOS et on prend un 2e trade sur le 1er FVG du BOS (même cible)
+  bosStop: 'repli',     // stop du 2e trade : 'repli' (derrière le sommet du repli entre MSS et BOS) ou 'origine' (même stop que le 1er)
+  fenetreBos: 192,      // le BOS doit venir dans les 192 bougies M15 après le MSS
+  oteBandeMin: 50, oteBandeMax: 78,   // mode 'ote' : bande de retracement de la jambe complète où doit se trouver le 50 % du FVG
+  confirmeRetrace: 0.2, // mode 'ote' : la jambe est terminée quand le prix a retracé 20 % de sa longueur
+  jambeMinAtr: 3,       // mode 'ote' : la jambe doit mesurer au moins 3 ATR M15 avant qu'on trace son OTE
+  fenetreJambe: 96,     // mode 'ote' : la jambe doit se terminer dans les 96 bougies M15
+  poiLive: false,       // mode 'ote' : la POI HTF (FVG) est suivie EN DIRECT dès l'ouverture de sa 3e bougie, sans attendre la clôture
   mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
   sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
   sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
@@ -92,7 +101,11 @@ function poiHtf(H, htfMs, P) {
     const taille = function (z) { return (!P.zoneMinAtrH || z >= P.zoneMinAtrH * atrH[i]) && (!P.zoneMaxAtrH || z <= P.zoneMaxAtrH * atrH[i]); };
     const biaisOk = !P.biaisEma || H[i].c > ema[i];
     if (!biaisOk) continue;
-    if (/fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, t0: H[i - 2].t, touche: -1, utilise: false, origine: H[i - 2].l });
+    if (P.poiLive && /fvg/.test(P.poi) && H[i - 1].c > H[i - 1].o && H[i - 1].c > H[i - 2].h && H[i].o > H[i - 2].h && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) {
+      // FVG « en direct » : bas = haut de la 1re bougie ; le haut descend avec le plus bas de la 3e bougie tant qu'elle n'est pas close
+      zs.push({ genre: 'FVG live', live: true, bas: H[i - 2].h, haut: Infinity, dispo: H[i].t, fin: H[i].t + htfMs, minAtrH: P.zoneMinAtrH * atrH[i], touche: -1, utilise: false, origine: H[i - 2].l, t0: H[i - 2].t });
+    }
+    if (!P.poiLive && /fvg/.test(P.poi) && H[i].l > H[i - 2].h && taille(H[i].l - H[i - 2].h) && Math.abs(H[i - 1].c - H[i - 1].o) >= P.fvgCorpsMin * corpsMoy(i - 1)) zs.push({ genre: 'FVG', bas: H[i - 2].h, haut: H[i].l, dispo: H[i].t + htfMs, t0: H[i - 2].t, touche: -1, utilise: false, origine: H[i - 2].l });
     // OB : dernière bougie baissière avant une bougie haussière qui clôture au-dessus de son plus haut (déplacement)
     const j = i - 1;
     if (/ob/.test(P.poi) && H[j].c < H[j].o && H[i].c > H[i].o && H[i].c > H[j].h && Math.abs(H[i].c - H[i].o) >= P.obCorps * corpsMoy(i) && taille(H[j].h - H[j].l))
@@ -118,7 +131,8 @@ function chercherMss(bs, k, z, P) {
 }
 
 // FVG haussier créé par le mouvement du MSS (entre le creux et la bougie qui casse) : le plus récent
-function fvgMss(bs, iBas, k) {
+function fvgMss(bs, iBas, k, premier) {
+  if (premier) { for (let i = iBas + 2; i <= k; i++) if (bs[i].l > bs[i - 2].h) return { bas: bs[i - 2].h, haut: bs[i].l, i: i }; return null; }   // le 1er FVG du déplacement (celui du haut)
   for (let i = k; i >= iBas + 2; i--) if (bs[i].l > bs[i - 2].h) return { bas: bs[i - 2].h, haut: bs[i].l, i: i };
   return null;
 }
@@ -175,6 +189,25 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
       if (z.touche < 0) { if (bs[k].l <= z.haut) z.touche = k; else continue; }  // 2. le prix revient dans le FVG HTF
       if (P.zoneMinAtr && z.haut - z.bas < P.zoneMinAtr * atr) continue;
       if (P.sessions) { const h = new Date(bs[k].t).getUTCHours(); if (!P.sessions.some(function (s) { return h >= s[0] && h < s[1]; })) continue; }
+      if (z.bos) {   // le MSS est déjà pris : on attend le BOS (nouvelle cassure dans le même sens) et on entre sur le 1er FVG de ce déplacement
+        if (k - z.bos.k > P.fenetreBos || bs[k].l < bs[z.bos.iBas].l) { z.utilise = true; continue; }   // trop long, ou la structure est cassée
+        if (!(bs[k].c > z.bos.hi)) continue;
+        let i2 = z.bos.k + 1; for (let q = z.bos.k + 1; q <= k; q++) if (bs[q].l < bs[i2].l) i2 = q;     // creux du repli entre le MSS et le BOS
+        const f2 = fvgMss(bs, i2, k, P.fvgMssChoix === 'premier');
+        if (!f2) { z.utilise = true; continue; }
+        const e2 = (f2.bas + f2.haut) / 2;
+        if (!(bs[k].c > e2)) { z.utilise = true; continue; }
+        const stop2 = (P.bosStop === 'origine' ? bs[z.bos.iBas].l : bs[i2].l) - P.margeStop * atr, risque2 = e2 - stop2;
+        z.utilise = true;
+        if (!(risque2 >= P.stopMinAtr * atr)) continue;
+        const liq2 = liquidites(bs, k, e2, P, veille[k]);
+        if (!liq2.length) continue;
+        const tp12 = liq2[0] - P.margeCible * atr;
+        if ((tp12 - e2) / risque2 < P.rrMin) continue;
+        out.push({ lect: { iTouche: z.touche, iBas: i2, iPivot: z.bos.iBas, k: k, hi: z.bos.hi, lo: bs[i2].l, fvg: f2, ob: null }, k: k, t: t, entree: e2, stop: stop2, tp1: tp12, tp2: null, type: 'FVG BOS 50 %', atr: atr, zone: z,
+          mss: { iBas: i2, p: z.bos.iBas, niveau: z.bos.hi, k: k } });
+        break;
+      }
       const m = chercherMss(bs, k, z, P);                                         // 3. MSS en M15
       if (!m) continue;
       // 4. entrée
@@ -184,7 +217,7 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
       else {
         const niv = function (zn) { return zn.haut - (zn.haut - zn.bas) * P.niveauEntree / 100; };
         const c = [];
-        if (/fvg/.test(P.zoneEntree)) { const f = fvgMss(bs, m.iBas, k); if (f) c.push({ e: niv(f), t: 'FVG MSS' }); }
+        if (/fvg/.test(P.zoneEntree)) { const f = fvgMss(bs, m.iBas, k, P.fvgMssChoix === 'premier'); if (f) c.push({ e: niv(f), t: 'FVG MSS' }); }
         if (/ob/.test(P.zoneEntree)) { const o = obMss(bs, m.iBas, k); if (o) c.push({ e: niv(o), t: 'OB MSS' }); }
         if (/ote/.test(P.zoneEntree)) {
           let hi = -Infinity; for (let q = m.iBas; q <= k; q++) hi = Math.max(hi, bs[q].h);
@@ -210,12 +243,12 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
       // 5. première liquidité
       const liq = liquidites(bs, k, entree, P, veille[k]);
       if (!liq.length) continue;
-      let tp1 = liq[0];
+      let tp1 = liq[0] - P.margeCible * atr;
       if ((tp1 - entree) / risque < P.rrMin) continue;
       if (P.rrMax && (tp1 - entree) / risque > P.rrMax) tp1 = entree + P.rrMax * risque;
       const tp2 = liq.length > 1 && liq[1] > tp1 ? liq[1] : null;
-      z.utilise = true;
       let legHi = -Infinity; for (let q = m.iBas; q <= k; q++) legHi = Math.max(legHi, bs[q].h);
+      if (P.bos) z.bos = { k: k, iBas: m.iBas, hi: legHi }; else z.utilise = true;
       const lect = { iTouche: z.touche, iBas: m.iBas, iPivot: m.p, k: k, hi: legHi, lo: bs[m.iBas].l, fvg: fvgMss(bs, m.iBas, k), ob: obMss(bs, m.iBas, k) };
       out.push({ lect: lect, k: k, t: t, entree: entree, stop: stop, tp1: tp1, tp2: tp2, type: type, atr: atr, zone: z, mss: m });
       break;
@@ -251,7 +284,7 @@ function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
     const t = bs[k0].t + 15 * 60000, atr = atrs[k0];
     if (!Number.isFinite(atr) || t < depuis || bs[k0].t > jusqua) continue;
     if (!(bs[k0].c >= z.bas)) continue;                            // POI déjà invalidée
-    let meilleur = null;
+    let meilleur = null; const tous = [];
     if (P.sniperChoix === 'mss') {
       // MSS M15 dans le mouvement qui a créé la POI : clôture au-delà du dernier sommet pivot avant le creux ; le FVG créé par cette cassure
       const i0 = Math.max(debut(z.t0), 30), P2 = Object.assign({}, P, { fenetreMss: 96 });
@@ -273,18 +306,93 @@ function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
       let cm = 0; for (let i = q - 21; i < q - 1; i++) cm += Math.abs(bs[i].c - bs[i].o); cm /= 20;
       if (!(Math.abs(bs[q - 1].c - bs[q - 1].o) >= P.sniperCorps * cm)) continue;   // vraie impulsion
       if (!(e >= z.bas && e <= z.haut)) continue;                  // le 50 % est dans la POI
+      if (P.sniperChoix === 'tous') { tous.push({ e: e, q: q, stop: extremeOrigine(bs, q - 2, P) }); continue; }
       const mieux = !meilleur || (P.sniperChoix === 'proche' ? e > meilleur.e : P.sniperChoix === 'profond' ? e < meilleur.e : false);   // 'premier' : on garde le 1er trouvé
       if (mieux) meilleur = { e: e, q: q, stop: extremeOrigine(bs, q - 2, P) };
     }
-    if (!meilleur || !(bs[k0].c > meilleur.e)) continue;           // ordre limite d'achat : le prix doit être au-dessus
-    const stop = meilleur.stop - P.margeStop * atr, risque = meilleur.e - stop;
-    if (!(risque >= P.stopMinAtr * atr)) continue;
-    const liq = liquidites(bs, k0, meilleur.e, P, veille[k0]);
-    if (!liq.length || (liq[0] - meilleur.e) / risque < P.rrMin) continue;
-    let tp1 = liq[0] - P.margeCible * atr;
-    if (!((tp1 - meilleur.e) / risque >= P.rrMin)) continue;
-    if (P.rrMax && (tp1 - meilleur.e) / risque > P.rrMax) tp1 = meilleur.e + P.rrMax * risque;
-    out.push({ k: k0, t: t, entree: meilleur.e, stop: stop, tp1: tp1, tp2: liq.length > 1 && liq[1] - P.margeCible * atr > tp1 ? liq[1] - P.margeCible * atr : null, type: 'FVG M15 50 % (sniper)', atr: atr, zone: z, mss: null, lect: null, expireBars: P.dureeSniper });
+    const liste = P.sniperChoix === 'tous' ? tous : (meilleur ? [meilleur] : []);
+    for (const mm of liste) {
+      if (!(bs[k0].c > mm.e)) continue;                              // ordre limite d'achat : le prix doit être au-dessus
+      const stop = mm.stop - P.margeStop * atr, risque = mm.e - stop;
+      if (!(risque >= P.stopMinAtr * atr)) continue;
+      const liq = liquidites(bs, k0, mm.e, P, veille[k0]);
+      if (!liq.length) continue;
+      let tp1 = liq[0] - P.margeCible * atr;
+      if (!((tp1 - mm.e) / risque >= P.rrMin)) continue;
+      if (P.rrMax && (tp1 - mm.e) / risque > P.rrMax) tp1 = mm.e + P.rrMax * risque;
+      out.push({ k: k0, t: t, groupe: z, entree: mm.e, stop: stop, tp1: tp1, tp2: liq.length > 1 && liq[1] - P.margeCible * atr > tp1 ? liq[1] - P.margeCible * atr : null, type: 'FVG M15 50 % (sniper)', atr: atr, zone: z, mss: null, lect: null, expireBars: P.dureeSniper });
+    }
+  }
+  return out;
+}
+
+// Mode « ote » (explication du 07/10/2026) : POI HTF touchée -> MSS M15 -> la jambe se termine (le prix retrace 20 %) ->
+// la zone OTE est la bande 50-78 % de retracement de la JAMBE COMPLÈTE ; tout FVG M15 de la jambe dont le 50 % est dans cette bande
+// est une zone d'intérêt (le plus proche du prix en premier) : ordre limite à son 50 %, stop derrière la mèche d'origine de la jambe.
+// Ensuite un BOS (nouvelle cassure dans le même sens) donne une 2e jambe : même raisonnement, même cible.
+function ordreOte(bs, iBas, r, hiR, P) {
+  const lo = bs[iBas].l, L = hiR - lo;
+  let meilleur = null;
+  for (let i = iBas + 2; i <= r; i++) {
+    if (!(bs[i].l > bs[i - 2].h)) continue;
+    const e = (bs[i - 2].h + bs[i].l) / 2, ret = (hiR - e) / L * 100;
+    if (ret < P.oteBandeMin || ret > P.oteBandeMax) continue;
+    if (!(bs[r].c > e)) continue;
+    if (!meilleur || e > meilleur.e) meilleur = { e: e, i: i };
+  }
+  return meilleur;
+}
+
+function setupsOte(bs, H, atrs, P, depuis, jusqua) {
+  const htfMs = P.htf * 60000, zs = poiHtf(H, htfMs, P), veille = plusHautsVeille(bs), out = [];
+  let prochaine = 0, actives = [];
+  for (let k = 60; k < bs.length - 1; k++) {
+    const t = bs[k].t + 15 * 60000, atr = atrs[k];
+    while (prochaine < zs.length && zs[prochaine].dispo <= t) { actives.push(zs[prochaine]); prochaine++; }
+    actives = actives.filter(function (z) { return !z.utilise && (z.leg || bs[k].c >= z.bas) && t - z.dispo <= P.ageMax * htfMs; });
+    const actif = Number.isFinite(atr) && t >= depuis && bs[k].t <= jusqua;
+    for (const z of actives) {
+      if (z.live && bs[k].t < z.fin) { z.haut = Math.min(z.haut, bs[k].l); if (z.haut <= z.bas) { z.utilise = true; continue; } }   // le FVG se referme : zone morte
+      else if (z.live && !z.verifie) { z.verifie = true; if (z.haut - z.bas < z.minAtrH) { z.utilise = true; continue; } }
+      if (z.touche < 0) { if (bs[k].l <= z.haut) z.touche = k; else continue; }
+      if (!actif) continue;
+      const g = z.leg;
+      if (!g) {                                                    // 1. POI touchée : on cherche le MSS
+        const m = chercherMss(bs, k, z, Object.assign({}, P, { fenetreMss: P.fenetreJambe }));
+        if (m) z.leg = { etape: 1, iBas: m.iBas, k0: k, hi: -Infinity, origine: m.iBas };
+        else continue;
+        continue;
+      }
+      if (bs[k].l < bs[g.iBas].l && g.etape !== 2) { z.utilise = true; continue; }   // le bas d'origine est repris : plus de structure
+      if (g.etape === 1 || g.etape === 3) {                       // 2. jambe en cours : on suit son sommet, on attend que le prix retrace
+        for (let q = Math.max(g.k0, g.iBas); q <= k; q++) g.hi = Math.max(g.hi, bs[q].h);
+        const lo = bs[g.iBas].l;
+        if (k - g.k0 > P.fenetreJambe) { z.utilise = true; continue; }
+        if (g.hi - lo < P.jambeMinAtr * atr) continue;
+        if (!(bs[k].c <= g.hi - P.confirmeRetrace * (g.hi - lo))) continue;
+        const o = ordreOte(bs, g.iBas, k, g.hi, P);
+        if (o) {
+          const base = g.etape === 1 || P.bosStop !== 'origine' ? lo : bs[g.origine].l;
+          const stop = base - P.margeStop * atr, risque = o.e - stop;
+          const liq = liquidites(bs, k, o.e, P, veille[k]);
+          if (risque >= P.stopMinAtr * atr && liq.length) {
+            const tp1 = liq[0] - P.margeCible * atr;
+            if ((tp1 - o.e) / risque >= P.rrMin)
+              out.push({ k: k, t: t, groupe: z, entree: o.e, stop: stop, tp1: tp1, tp2: null, type: g.etape === 1 ? 'FVG OTE (MSS)' : 'FVG OTE (BOS)', atr: atr, zone: z, mss: null, lect: null, expireBars: P.dureeSniper });
+          }
+        }
+        if (g.etape === 1 && P.bos) z.leg = { etape: 2, iBas: g.iBas, origine: g.origine, hi: g.hi, from: k, k0: k };
+        else z.utilise = true;
+        continue;
+      }
+      if (g.etape === 2) {                                         // 3. on attend le BOS : clôture au-delà du sommet de la 1re jambe
+        if (k - g.k0 > P.fenetreBos || bs[k].l < bs[g.origine].l) { z.utilise = true; continue; }
+        if (bs[k].c > g.hi) {
+          let i2 = g.from; for (let q = g.from; q <= k; q++) if (bs[q].l < bs[i2].l) i2 = q;     // creux du repli = origine de la 2e jambe
+          z.leg = { etape: 3, iBas: i2, k0: k, hi: -Infinity, origine: g.origine };
+        }
+      }
+    }
   }
   return out;
 }
@@ -298,27 +406,31 @@ function backtesterActif(actif, M15, P, depuis, jusqua) {
   const tous = [];
   for (const S of [1, -1]) {
     const g = S > 0 ? bs : bm;
-    for (const s of (P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
+    for (const s of (P.mode === 'ote' ? setupsOte : P.mode === 'sniper' ? setupsSniper : setupsAchat)(g, S > 0 ? H : Hm, S > 0 ? atrA : atrV, P, depuis, jusqua)) tous.push({ S: S, s: s });
   }
   tous.sort(function (a, b) { return a.s.t - b.s.t; });
   const trades = [];
   let libre = 0;
+  let groupeEnCours = null, finGroupe = 0;
   for (const x of tous) {
     const S = x.S, s = x.s;
-    if (s.t < libre) continue;
+    if (s.groupe && s.groupe === groupeEnCours) libre = 0;   // plusieurs entrées sniper sur la même POI : toutes prises
+    else if (s.t < libre) continue;
+    else if (s.groupe) { groupeEnCours = s.groupe; finGroupe = 0; }
     let entree = s.entree;
     if (P.entree === 'marche' && S > 0) entree += actif.spread * P.spreadFacteur;
     if (actif.spread > P.spreadMaxR * (entree - s.stop)) continue;
     const sig = { sens: S > 0 ? 'buy' : 'sell', entree: S * entree, stop: S * s.stop, tp1: S * s.tp1, tp2: s.tp2 === null ? null : S * s.tp2,
       expireA: new Date(s.t + (s.expireBars || P.dureeOrdre) * 15 * 60000).toISOString() };
     const issue = suivreTrade(M15, s.k + 1, sig, actif.spread * P.spreadFacteur, regl);
-    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
+    trades.push(Object.assign({ symbole: actif.symbol, sens: sig.sens, scenario: (P.mode === 'ote' ? 'HTF + MSS/BOS + FVG dans l\'OTE (' : P.mode === 'sniper' ? 'HTF + FVG M15 sniper (' : 'HTF FVG + MSS M15 (') + ({ 60: 'H1', 240: 'H4', 1440: 'D1' }[P.htf] || P.htf + 'min') + ')', grade: 'MSS',
       entree: sig.entree, stop: sig.stop, tp1: sig.tp1, tp2: sig.tp2, typeEntree: s.type, tSignal: (S > 0 ? bs : bm)[s.k].t,
       mss: !s.mss ? null : { tBas: (S > 0 ? bs : bm)[s.mss.iBas].t, tPivot: (S > 0 ? bs : bm)[s.mss.p].t, niveau: S * s.mss.niveau, bas: S * (S > 0 ? bs : bm)[s.mss.iBas].l, tCassure: (S > 0 ? bs : bm)[s.k].t },
       lecture: s.lect ? lecture(S, S > 0 ? bs : bm, s.lect) : null,
       zoneHtf: { genre: s.zone.genre, bas: S > 0 ? s.zone.bas : -s.zone.haut, haut: S > 0 ? s.zone.haut : -s.zone.bas, dispo: s.zone.dispo },
       f: { risqueAtr: +((entree - s.stop) / s.atr).toFixed(2), rrTp1: +((s.tp1 - entree) / (entree - s.stop)).toFixed(2) } }, issue));
-    libre = (issue.tFin || s.t) + 1;
+    finGroupe = Math.max(finGroupe, (issue.tFin || s.t) + 1);
+    libre = s.groupe ? finGroupe : (issue.tFin || s.t) + 1;
   }
   return trades;
 }
