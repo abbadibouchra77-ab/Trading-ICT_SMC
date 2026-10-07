@@ -24,6 +24,8 @@ const { bilan, grouper } = require('./amd15.js');
 const DEFAUT = {
   poi: 'fvg+ob',        // POI de la haute unité de temps : 'fvg', 'ob' ou 'fvg+ob' (l'un OU l'autre)
   zoneEntree: 'fvg+ob', // zone d'entrée du MSS en M15 : 'fvg', 'ob', 'ote' ou une combinaison ('fvg+ob+ote') : la plus proche du prix est touchée en premier
+  oteFiltre: false,     // la zone d'entrée (50 % du FVG / de l'OB du MSS) doit être dans l'OTE : retracement de oteMin à oteMax % de la jambe du MSS
+  oteMin: 62, oteMax: 79,
   oteNiveau: 70.5,      // zone 'ote' : retracement de la jambe du MSS (62 = bord proche, 70,5 = milieu de l'OTE, 79 = bord lointain)
   niveauEntree: 50,     // 50 = milieu de la zone, 0 = bord proche (haut de la zone, entrée au 1er contact)
   obCorps: 1.0,         // OB HTF : la bougie qui suit a un corps ≥ 1 × le corps moyen des 20 bougies
@@ -181,7 +183,12 @@ function setupsAchat(bs, H, atrs, P, depuis, jusqua) {
           const lo = bs[m.iBas].l;
           c.push({ e: hi - (hi - lo) * P.oteNiveau / 100, t: 'OTE ' + P.oteNiveau + ' %' });   // retracement de la jambe lo -> hi
         }
-        c.sort(function (x, y) { return y.e - x.e; });      // la plus haute est touchée en premier
+        c.sort(function (x, y) { return y.e - x.e; });
+        if (P.oteFiltre) {
+          let hi = -Infinity; for (let q = m.iBas; q <= k; q++) hi = Math.max(hi, bs[q].h);
+          const lo = bs[m.iBas].l, h = hi - lo;
+          for (let q = c.length - 1; q >= 0; q--) { const r = (hi - c[q].e) / h * 100; if (!(r >= P.oteMin && r <= P.oteMax)) c.splice(q, 1); }
+        }      // la plus haute est touchée en premier
         const ok = c.filter(function (x) { return b.c > x.e; });
         if (!ok.length) continue;                            // pas de zone, ou le prix est déjà sous elle
         entree = ok[0].e; type = ok[0].t;
