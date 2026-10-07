@@ -37,7 +37,9 @@ const DEFAUT = {
   mode: 'mss',          // 'mss' : on attend un nouveau MSS M15 dans la POI ; 'sniper' : ordre limite à 50 % du FVG M15 qui a créé le mouvement de la POI HTF
   sniperCorps: 1.0,     // sniper : la bougie d'impulsion du FVG M15 a un corps ≥ ce multiple du corps moyen des 20 bougies
   sniperFvgMinAtr: 0.2, // sniper : taille minimale du FVG M15 en ATR M15
-  sniperChoix: 'premier', // 'premier' (le 1er FVG M15 du mouvement : celui de la cassure de structure), 'proche' (50 % le plus proche du prix) ou 'profond' (le plus loin dans la POI)
+  sniperBos: false,     // sniper + 'mss' : un BOS (nouvelle cassure dans le même sens, après le MSS) doit confirmer avant que la POI soit disponible
+  sniperChoix: 'mss',   // 'mss' (le FVG créé par le MSS M15 du mouvement),  // 'premier' (le 1er FVG M15 du mouvement : celui de la cassure de structure), 'proche' (50 % le plus proche du prix) ou 'profond' (le plus loin dans la POI)
+  origineBougies: 6,    // sniper : la mèche d'origine = le plus bas des 6 bougies M15 qui précèdent l'impulsion (1re bougie du FVG comprise)
   dureeSniper: 96,      // sniper : l'ordre limite attend 96 bougies M15 (24 h)
   htf: 240,             // unité de temps du FVG, en minutes : 60 (H1), 240 (H4) ou 1440 (D1)
   ageMax: 60,           // le FVG HTF reste valable 60 bougies HTF
@@ -231,6 +233,12 @@ function lecture(S, g, l) {
     ob: l.ob ? { bas: Math.min(pr(l.ob.bas), pr(l.ob.haut)), haut: Math.max(pr(l.ob.bas), pr(l.ob.haut)), t: g[l.ob.i].t } : null };
 }
 
+// Mèche d'origine du mouvement : plus bas des `origineBougies` bougies jusqu'à la 1re bougie du FVG M15 (le petit groupe qui précède l'impulsion)
+function extremeOrigine(bs, c1, P) {
+  let b = bs[c1].l; for (let i = Math.max(0, c1 - P.origineBougies + 1); i <= c1; i++) b = Math.min(b, bs[i].l);
+  return b;
+}
+
 // Mode « sniper » : la POI HTF devient disponible ; parmi les FVG M15 formés PENDANT le mouvement qui l'a créée
 // (impulsion avec corps), on prend celui dont le 50 % est dans la POI (le plus proche du prix) et on place un ordre limite dessus.
 // Stop derrière la mèche de la bougie qui a créé le mouvement (1re bougie du FVG M15). Cible : première liquidité.
@@ -244,6 +252,20 @@ function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
     if (!Number.isFinite(atr) || t < depuis || bs[k0].t > jusqua) continue;
     if (!(bs[k0].c >= z.bas)) continue;                            // POI déjà invalidée
     let meilleur = null;
+    if (P.sniperChoix === 'mss') {
+      // MSS M15 dans le mouvement qui a créé la POI : clôture au-delà du dernier sommet pivot avant le creux ; le FVG créé par cette cassure
+      const i0 = Math.max(debut(z.t0), 30), P2 = Object.assign({}, P, { fenetreMss: 96 });
+      for (let q = i0 + 3; q < k0 && !meilleur; q++) {
+        const m = chercherMss(bs, q, { touche: i0 }, P2);
+        if (!m) continue;
+        const f = fvgMss(bs, m.iBas, q);
+        if (!f) continue;
+        const e = (f.bas + f.haut) / 2;
+        if (!(e >= z.bas && e <= z.haut)) continue;
+        if (P.sniperBos) { let bos = false; for (let r = q + 1; r < k0; r++) if (bs[r].c > bs[q].h) { bos = true; break; } if (!bos) continue; }
+        meilleur = { e: e, q: q, stop: extremeOrigine(bs, f.i - 2, P) };
+      }
+    } else
     for (let q = Math.max(debut(z.t0) + 2, 22); q < k0; q++) {
       if (!(bs[q].l > bs[q - 2].h)) continue;                      // FVG haussier M15 (q-2, q-1, q)
       const zb = bs[q - 2].h, zh = bs[q].l, e = (zb + zh) / 2;
@@ -252,7 +274,7 @@ function setupsSniper(bs, H, atrs, P, depuis, jusqua) {
       if (!(Math.abs(bs[q - 1].c - bs[q - 1].o) >= P.sniperCorps * cm)) continue;   // vraie impulsion
       if (!(e >= z.bas && e <= z.haut)) continue;                  // le 50 % est dans la POI
       const mieux = !meilleur || (P.sniperChoix === 'proche' ? e > meilleur.e : P.sniperChoix === 'profond' ? e < meilleur.e : false);   // 'premier' : on garde le 1er trouvé
-      if (mieux) meilleur = { e: e, q: q, stop: bs[q - 2].l };
+      if (mieux) meilleur = { e: e, q: q, stop: extremeOrigine(bs, q - 2, P) };
     }
     if (!meilleur || !(bs[k0].c > meilleur.e)) continue;           // ordre limite d'achat : le prix doit être au-dessus
     const stop = meilleur.stop - P.margeStop * atr, risque = meilleur.e - stop;
