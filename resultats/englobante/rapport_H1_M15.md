@@ -201,3 +201,21 @@ W en H1 : toutes les variantes voisines sont légèrement positives (+0,01 à +0
 en 2023-2025 et +8,6 R en 2026 : l'avantage n'est pas stable dans le temps.
 
 W : `--reglages '{"precOpposee":true,"corpsPrecMin":0.5,"corpsEnglMin":0.5,"taillePrecMin":0.8,"ratioMax":2}'`
+
+## Killzones (question du 12/10/2026)
+
+Jusqu'ici les trades étaient pris 24 h / 24. Filtre `killzones` : l'entrée (clôture de l'englobante) doit tomber dans
+une killzone, heures de New York comme le moteur (Londres 2h-5h, New York matin 7h-11h). W = définition de l'englobante ci-dessus.
+
+| Réglage | H1 trades | H1 réussite | H1 R moyen | H1 PF | M15 trades | M15 réussite | M15 R moyen | M15 PF |
+|---|---|---|---|---|---|---|---|---|
+| sans filtre, killzones Londres + NY | 7 138 | 31,5 % | -0,058 | 0,92 | 19 781 | 30,0 % | -0,102 | 0,85 |
+| W, 24 h / 24 (rappel) | 1 222 | 35,3 % | +0,055 | 1,08 | 5 380 | 30,4 % | -0,090 | 0,87 |
+| W, killzones Londres + NY | 614 | 35,2 % | +0,051 | 1,08 | 2 552 | 30,6 % | -0,083 | 0,88 |
+| W, hors killzones | 624 | 35,3 % | +0,056 | 1,09 | 2 901 | 30,4 % | -0,091 | 0,87 |
+| **W, killzone de Londres seule** | **215** | **39,1 %** | **+0,172** | **1,28** | 1 216 | 30,5 % | -0,085 | 0,88 |
+| W, killzone New York seule | 402 | 32,8 % | -0,022 | 0,97 | 1 346 | 30,5 % | -0,086 | 0,88 |
+| W + pas de range, killzones Londres + NY | 166 | 30,7 % | -0,085 | 0,88 | 586 | 27,1 % | -0,186 | 0,74 |
+
+W Londres en H1 : compte de 10 000 -> 27 250 (drawdown max 46 %) ; par année +20 / +7 / -1 / +7 / -11 / +8 / -4 / +11 R
+(5 années positives sur 8).

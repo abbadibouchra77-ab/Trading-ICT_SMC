@@ -46,6 +46,7 @@ const DEFAUT = {
   ratioMax: 0,         // > 0 : l'englobante ne fait pas plus de ratioMax x la bougie englobée (elle l'engloutit, elle ne l'explose pas)
   espaceR: 0,          // > 0 : le sommet (creux pour une vente) non pris le plus proche est au moins à espaceR x le risque
   reculNiveaux: 100,   //       sommets / creux de swing (pivots 2 bougies) des 100 dernières bougies
+  killzones: null,     // ex. [[200, 500], [700, 1100]] : entrée seulement dans ces heures de New York (HHMM), comme le moteur
   decote: 0            // > 0 : achat seulement en décote (clôture sous le milieu du plus haut / plus bas des N bougies), vente en prime
 };
 const SUPERIEURE = { 60: 'D1', 15: 'H4', 20: 'H4', 30: 'H4', 45: 'H4' };
@@ -222,6 +223,7 @@ function backtesterActif(actif, M15, ut, P, depuis, jusqua) {
   for (const s of signaux) {
     const b = s.g[s.q], tClot = bs[s.q].t + dureeUt;
     if (tClot < depuis || bs[s.q].t > jusqua || tClot < libre) continue;
+    if (P.killzones) { const h = moteur.ny(tClot).hm; if (!P.killzones.some(function (k) { return h >= k[0] && h < k[1]; })) continue; }
     while (k < M15.length && M15[k].time < tClot) k++;
     if (k >= M15.length) break;
     // achat : entrée à l'ask (clôture + spread), stop au plus bas de la mèche (bid) ; vente : entrée au bid, stop au plus haut + spread
