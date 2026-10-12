@@ -95,4 +95,7 @@ node tests/test_backtest.js
 ```
 
 Un CSV par actif (M15 ou M1), colonnes `time, open, high, low, close, volume`, heure en UTC.
+Stratégie « englobante avec prise de liquidité dans une zone POI » (H1 / M15, direction Daily / H4) :
+`node backtest/englobante.js --donnees <dossier des CSV> --ut 60,15 --sortie resultats/englobante`.
+
 Le rapport (`resultats/rapport.md`) donne le compte complet, les résultats par actif et par année, et `trades.csv` liste chaque trade.
