@@ -152,3 +152,27 @@ Base : `precOpposee` (la bougie englobée va dans l'autre sens) + `corpsPrecMin`
 
 F : `--reglages '{"precOpposee":true,"corpsPrecMin":0.5,"structureUt":true,"rangeFenetre":24,"rangeEff":0.3,"espaceR":2,"corpsEnglMin":0.5}'`
 (202 trades en 7 ans sur 13 actifs : trop peu pour conclure ; années très irrégulières, de -14 R en 2020 à +13 R en 2022).
+
+## Taille des bougies et direction (« un doji qui prend un doji », 12/10/2026)
+
+Une petite bougie pleine passait le filtre « pas de doji » (corps / mèches) mais reste un doji à l'œil :
+on exige maintenant une taille minimale par rapport à l'ATR 14. `structureUt: 'swing'` = structure de swing
+externe avec déplacement (comme le moteur) au lieu des pivots 2 bougies.
+
+Base : bougie englobée opposée, corps ≥ 50 % pour les deux bougies, pas de range (24 bougies, 0,3).
+
+| Réglage | H1 trades | H1 réussite | H1 R moyen | H1 PF | M15 trades | M15 réussite | M15 R moyen | M15 PF |
+|---|---|---|---|---|---|---|---|---|
+| **I : structure pivots + `espaceR` 2 + englobée ≥ 0,8 ATR + englobante ≥ 1,2 ATR** | **87** | **41,4 %** | **+0,241** | **1,41** | 282 | 26,6 % | -0,202 | 0,72 |
+| J : structure swing + `espaceR` 2 | 198 | 31,8 % | -0,047 | 0,93 | 713 | 27,2 % | -0,191 | 0,74 |
+| K : structure swing + `espaceR` 2 + tailles 0,8 / 1,2 | 90 | 34,4 % | +0,033 | 1,05 | 314 | 28,0 % | -0,159 | 0,78 |
+| L : structure swing + tailles 0,8 / 1,2 | 233 | 30,5 % | -0,091 | 0,87 | 851 | 29,5 % | -0,120 | 0,83 |
+| M : structure swing + `espaceR` 2 + tailles 0,6 / 1,0 | 122 | 36,9 % | +0,104 | 1,16 | 475 | 27,6 % | -0,181 | 0,75 |
+| N : structure swing + `espaceR` 1,5 + tailles 0,8 / 1,2 | 101 | 32,7 % | -0,020 | 0,97 | 354 | 28,8 % | -0,136 | 0,81 |
+| O : structure pivots + tailles 0,8 / 1,2 (sans `espaceR`) | 213 | 33,8 % | +0,010 | 1,02 | 657 | 28,6 % | -0,148 | 0,79 |
+
+I en H1 : compte de 10 000 -> 19 338 (drawdown max 42,8 %), 6 années positives sur 8 (2020 : -10 R).
+Attention : 87 trades en 7 ans et demi (environ 1 par mois sur 13 actifs) et un réglage choisi parmi une vingtaine :
+l'avantage n'est pas encore prouvé (écart type du R moyen ≈ 0,16).
+
+I : `--reglages '{"precOpposee":true,"corpsPrecMin":0.5,"corpsEnglMin":0.5,"rangeFenetre":24,"rangeEff":0.3,"structureUt":true,"espaceR":2,"taillePrecMin":0.8,"tailleEnglMin":1.2}'`

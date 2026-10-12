@@ -32,6 +32,7 @@ const DEFAUT = {
   spreadFacteur: 1,    // 0 = sans spread (diagnostic)
   // Filtre « range, pas de direction » (annotation de l'utilisatrice sur la perte XAUUSD H1 du 06/10/2026) :
   structureUt: false,  // la dernière cassure de structure de l'unité du signal doit aller dans le sens du trade
+                       // (true : pivots pivotUt ; 'swing' : structure de swing externe avec déplacement, comme le moteur)
   pivotUt: 2,
   rangeFenetre: 0,     // > 0 : pas de trade si, sur ces N bougies avant le signal, le prix tourne en rond
   rangeEff: 0.3,       //       (déplacement net / chemin parcouru < rangeEff)
@@ -40,6 +41,8 @@ const DEFAUT = {
   precOpposee: false,  // la bougie englobée va dans l'autre sens (baissière pour un achat)
   corpsPrecMin: 0,     // corps de la bougie englobée >= cette part de sa taille (pas de doji)
   corpsEnglMin: 0,     // corps de l'englobante >= cette part de sa taille
+  taillePrecMin: 0,    // taille (haut - bas) de la bougie englobée >= taillePrecMin x ATR 14 (pas de petite bougie « doji »)
+  tailleEnglMin: 0,    // taille de l'englobante >= tailleEnglMin x ATR 14
   espaceR: 0,          // > 0 : le sommet (creux pour une vente) non pris le plus proche est au moins à espaceR x le risque
   reculNiveaux: 100,   //       sommets / creux de swing (pivots 2 bougies) des 100 dernières bougies
   decote: 0            // > 0 : achat seulement en décote (clôture sous le milieu du plus haut / plus bas des N bougies), vente en prime
@@ -106,6 +109,24 @@ function directions(bs, L) {
   return out;
 }
 
+// Direction par la structure de swing externe (moteur.structureSwing) : on ne garde que les cassures faites
+// avec déplacement (corps >= 1,5 x la moyenne des 20 bougies, dans les 2 bougies avant la cassure ou la suivante).
+// La cassure n'est connue qu'à la bougie qui confirme le déplacement (au plus tard i + 1).
+function directionsSwing(bs) {
+  const st = moteur.structureSwing(bs), out = new Array(bs.length).fill(0), connus = [];
+  for (const e of st.evts) {
+    let cm = 0, n = 0; for (let q = Math.max(0, e.i - 22); q < Math.max(1, e.i - 2); q++) { cm += Math.abs(bs[q].c - bs[q].o); n++; } cm = n ? cm / n : 0;
+    for (let q = Math.max(2, e.i - 2); q <= Math.min(bs.length - 1, e.i + 1); q++) {
+      const b = bs[q];
+      if ((e.dir === 1 ? b.c > b.o : b.c < b.o) && Math.abs(b.c - b.o) >= 1.5 * cm) { connus.push({ i: Math.max(e.i, q), dir: e.dir }); break; }
+    }
+  }
+  connus.sort(function (a, b) { return a.i - b.i; });
+  let k = 0, d = 0;
+  for (let i = 0; i < bs.length; i++) { while (k < connus.length && connus[k].i <= i) d = connus[k++].dir; out[i] = d; }
+  return out;
+}
+
 // Range : sur les n bougies avant q, le prix a beaucoup bougé mais peu avancé (déplacement net / chemin < eff).
 function enRange(bs, q, n, eff) {
   if (q - n < 1) return true;
@@ -128,7 +149,8 @@ function resistance(bs, q, sommets, recul) {
 // connue à la clôture de la bougie k. Renvoie [{ q, zone }].
 function signauxAchat(bs, dirSup, P) {
   const zs = zonesAchat(bs, P.ageMaxZone), out = [];
-  const dirUt = P.structureUt ? directions(bs, P.pivotUt) : null;
+  const dirUt = P.structureUt === 'swing' ? directionsSwing(bs) : P.structureUt ? directions(bs, P.pivotUt) : null;
+  const atr = moteur.atrSerie(bs, 14);
   const sommets = new Uint8Array(bs.length);
   if (P.espaceR) for (const x of moteur.pivots(bs, 2)) if (x.type === 'H') sommets[x.i] = 1;
   let z = 0; const actives = [];
@@ -143,6 +165,8 @@ function signauxAchat(bs, dirSup, P) {
     if (dirUt && dirUt[q] !== 1) continue;
     if (P.precOpposee && !(p.c < p.o)) continue;
     if (P.corpsPrecMin && !(p.h > p.l && Math.abs(p.c - p.o) >= P.corpsPrecMin * (p.h - p.l))) continue;
+    if (P.taillePrecMin && !(p.h - p.l >= P.taillePrecMin * atr[q - 1])) continue;
+    if (P.tailleEnglMin && !(b.h - b.l >= P.tailleEnglMin * atr[q - 1])) continue;
     if (P.corpsEnglMin && !(b.c - b.o >= P.corpsEnglMin * (b.h - b.l))) continue;
     if (P.espaceR && resistance(bs, q, sommets, P.reculNiveaux) - b.c < P.espaceR * (b.c - b.l)) continue;
     if (P.rangeFenetre && enRange(bs, q, P.rangeFenetre, P.rangeEff)) continue;
@@ -282,4 +306,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { DEFAUT, zonesAchat, directions, enRange, resistance, signauxAchat, suivre, backtesterActif };
+module.exports = { DEFAUT, zonesAchat, directions, directionsSwing, enRange, resistance, signauxAchat, suivre, backtesterActif };
