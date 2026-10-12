@@ -29,7 +29,13 @@ const DEFAUT = {
   pivotDirection: 2,   // pivots de la structure de l'unité supérieure
   ageMaxZone: 200,     // une zone POI n'est plus regardée après 200 bougies
   dureeMaxJours: 20,   // trade clôturé au marché après 20 jours
-  spreadFacteur: 1     // 0 = sans spread (diagnostic)
+  spreadFacteur: 1,    // 0 = sans spread (diagnostic)
+  // Filtre « range, pas de direction » (annotation de l'utilisatrice sur la perte XAUUSD H1 du 06/10/2026) :
+  structureUt: false,  // la dernière cassure de structure de l'unité du signal doit aller dans le sens du trade
+  pivotUt: 2,
+  rangeFenetre: 0,     // > 0 : pas de trade si, sur ces N bougies avant le signal, le prix tourne en rond
+  rangeEff: 0.3,       //       (déplacement net / chemin parcouru < rangeEff)
+  decote: 0            // > 0 : achat seulement en décote (clôture sous le milieu du plus haut / plus bas des N bougies), vente en prime
 };
 const SUPERIEURE = { 60: 'D1', 15: 'H4', 20: 'H4', 30: 'H4', 45: 'H4' };
 const NOM_UT = { 15: 'M15', 20: 'M20', 30: 'M30', 45: 'M45', 60: 'H1' };
@@ -93,10 +99,18 @@ function directions(bs, L) {
   return out;
 }
 
+// Range : sur les n bougies avant q, le prix a beaucoup bougé mais peu avancé (déplacement net / chemin < eff).
+function enRange(bs, q, n, eff) {
+  if (q - n < 1) return true;
+  let chemin = 0; for (let i = q - n + 1; i < q; i++) chemin += Math.abs(bs[i].c - bs[i - 1].c);
+  return chemin <= 0 || Math.abs(bs[q - 1].c - bs[q - n].c) / chemin < eff;
+}
+
 // Signaux d'ACHAT sur bs (graphique éventuellement retourné). dirSup(k) = direction de l'unité supérieure
 // connue à la clôture de la bougie k. Renvoie [{ q, zone }].
 function signauxAchat(bs, dirSup, P) {
   const zs = zonesAchat(bs, P.ageMaxZone), out = [];
+  const dirUt = P.structureUt ? directions(bs, P.pivotUt) : null;
   let z = 0; const actives = [];
   for (let q = 20; q < bs.length; q++) {
     // zones valables après la clôture de q-1
@@ -106,6 +120,12 @@ function signauxAchat(bs, dirSup, P) {
     if (!(b.c > b.o) || !(b.l < p.l)) continue;
     if (P.englobe === 'corps' ? !(p.c < p.o && b.c > p.o) : !(b.c > p.h)) continue;
     if (dirSup(q) !== 1) continue;
+    if (dirUt && dirUt[q] !== 1) continue;
+    if (P.rangeFenetre && enRange(bs, q, P.rangeFenetre, P.rangeEff)) continue;
+    if (P.decote) {
+      let hi = -Infinity, lo = Infinity; for (let i = Math.max(0, q - P.decote); i <= q; i++) { hi = Math.max(hi, bs[i].h); lo = Math.min(lo, bs[i].l); }
+      if (!(b.c < (hi + lo) / 2)) continue;
+    }
     let zone = null;
     // la mèche entre dans la zone et la bougie clôture au-dessus de son bas ; on garde la zone la plus récente
     for (const x of actives) if (b.l <= x.haut && b.c >= x.bas && (!zone || x.iForme > zone.iForme)) zone = x;
@@ -238,4 +258,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { DEFAUT, zonesAchat, directions, signauxAchat, suivre, backtesterActif };
+module.exports = { DEFAUT, zonesAchat, directions, enRange, signauxAchat, suivre, backtesterActif };

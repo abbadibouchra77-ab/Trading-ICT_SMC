@@ -119,3 +119,18 @@ Période : 2019-03-01 au 2026-12-31. Objectif 2R, stop derrière la mèche, entr
   H1 18 133 trades, 30,9 %, R moyen -0,081, PF 0,88 ; M15 69 374 trades, 28,5 %, R moyen -0,150, PF 0,79.
 
 Commande : `node backtest/englobante.js --donnees <dossier CSV> --ut 60,15 --sortie resultats/englobante`
+
+## Filtre « range, pas de direction » (annotation du 12/10/2026 sur la perte XAUUSD H1 du 06/10)
+
+| Réglage | H1 trades | H1 réussite | H1 R moyen | H1 PF | M15 trades | M15 réussite | M15 R moyen | M15 PF |
+|---|---|---|---|---|---|---|---|---|
+| sans filtre | 13 511 | 30,8 % | -0,080 | 0,89 | 49 894 | 28,8 % | -0,142 | 0,80 |
+| structure de l'UT du signal dans le sens du trade (`structureUt`) | 8 232 | 31,3 % | -0,066 | 0,90 | 29 837 | 28,8 % | -0,142 | 0,80 |
+| pas de range sur 24 bougies (efficacité < 0,3) | 4 514 | 30,6 % | -0,087 | 0,88 | 13 711 | 28,6 % | -0,150 | 0,79 |
+| pas de range sur 24 bougies (efficacité < 0,5) | 1 051 | 30,2 % | -0,100 | 0,86 | 2 491 | 28,2 % | -0,161 | 0,78 |
+| structure + pas de range (0,3) | 2 589 | 31,5 % | -0,058 | 0,92 | 7 618 | 28,9 % | -0,142 | 0,80 |
+| **structure + pas de range (0,5)** | **595** | **32,8 %** | **-0,020** | **0,97** | 1 472 | 30,0 % | -0,107 | 0,85 |
+| achat en décote / vente en prime (48 bougies) | 5 659 | 30,2 % | -0,099 | 0,86 | 20 218 | 27,9 % | -0,166 | 0,77 |
+| structure + range (0,5) + décote (48) | 48 | 31,3 % | -0,095 | 0,86 | 84 | 23,8 % | -0,286 | 0,63 |
+
+Réglage : `--reglages '{"structureUt":true,"rangeFenetre":24,"rangeEff":0.5}'`.
