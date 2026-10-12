@@ -176,3 +176,28 @@ Attention : 87 trades en 7 ans et demi (environ 1 par mois sur 13 actifs) et un 
 l'avantage n'est pas encore prouvé (écart type du R moyen ≈ 0,16).
 
 I : `--reglages '{"precOpposee":true,"corpsPrecMin":0.5,"corpsEnglMin":0.5,"rangeFenetre":24,"rangeEff":0.3,"structureUt":true,"espaceR":2,"taillePrecMin":0.8,"tailleEnglMin":1.2}'`
+
+## L'englobante engloutit la bougie d'avant, elle ne l'explose pas (12/10/2026)
+
+« Pas fait son double ou son triple » : `ratioMax` = taille de l'englobante / taille de la bougie englobée au plus.
+Base W = bougie englobée opposée, corps ≥ 50 % pour les deux, bougie englobée ≥ 0,8 ATR, englobante ≤ 2 x la bougie englobée
+(plus de `tailleEnglMin`). Sans les filtres de direction H1 / range / place : seulement la direction Daily (H4) et la POI.
+
+| Réglage | H1 trades | H1 réussite | H1 R moyen | H1 PF | M15 trades | M15 réussite | M15 R moyen | M15 PF |
+|---|---|---|---|---|---|---|---|---|
+| **W** | **1 222** | **35,3 %** | **+0,055** | **1,08** | 5 380 | 30,4 % | -0,090 | 0,87 |
+| W + structure UT (pivots) | 577 | 34,0 % | +0,015 | 1,02 | 2 645 | 29,3 % | -0,125 | 0,82 |
+| W + structure UT (swing) | 663 | 34,7 % | +0,036 | 1,05 | 2 982 | 30,2 % | -0,095 | 0,86 |
+| W + pas de range (24 ; 0,3) | 315 | 35,2 % | +0,052 | 1,08 | 1 287 | 28,0 % | -0,165 | 0,77 |
+| W + `espaceR` 2 | 204 | 35,8 % | +0,064 | 1,10 | 926 | 27,0 % | -0,192 | 0,74 |
+| W + structure + pas de range | 109 | 33,9 % | +0,011 | 1,02 | 459 | 27,9 % | -0,172 | 0,76 |
+| W, englobée ≥ 0,6 ATR | 1 688 | 34,7 % | +0,035 | 1,05 | 7 836 | 29,7 % | -0,114 | 0,84 |
+| W, englobée ≥ 1 ATR | 847 | 34,5 % | +0,030 | 1,05 | 3 169 | 30,4 % | -0,090 | 0,87 |
+| W, englobante ≤ 1,5 x | 517 | 35,6 % | +0,063 | 1,10 | 2 658 | 30,5 % | -0,087 | 0,88 |
+| W + structure + range + `espaceR` 2 (Q) | 37 | 37,8 % | +0,135 | 1,22 | 156 | 25,0 % | -0,250 | 0,67 |
+
+W en H1 : toutes les variantes voisines sont légèrement positives (+0,01 à +0,06 R). Compte de 10 000 -> 51 681
+(drawdown max 59 %). Mais par année : +28,7 / +34,8 / +19,3 / +26,0 R de 2019 à 2022, puis -10,0 / -14,1 / -26,3 R
+en 2023-2025 et +8,6 R en 2026 : l'avantage n'est pas stable dans le temps.
+
+W : `--reglages '{"precOpposee":true,"corpsPrecMin":0.5,"corpsEnglMin":0.5,"taillePrecMin":0.8,"ratioMax":2}'`

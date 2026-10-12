@@ -43,6 +43,7 @@ const DEFAUT = {
   corpsEnglMin: 0,     // corps de l'englobante >= cette part de sa taille
   taillePrecMin: 0,    // taille (haut - bas) de la bougie englobée >= taillePrecMin x ATR 14 (pas de petite bougie « doji »)
   tailleEnglMin: 0,    // taille de l'englobante >= tailleEnglMin x ATR 14
+  ratioMax: 0,         // > 0 : l'englobante ne fait pas plus de ratioMax x la bougie englobée (elle l'engloutit, elle ne l'explose pas)
   espaceR: 0,          // > 0 : le sommet (creux pour une vente) non pris le plus proche est au moins à espaceR x le risque
   reculNiveaux: 100,   //       sommets / creux de swing (pivots 2 bougies) des 100 dernières bougies
   decote: 0            // > 0 : achat seulement en décote (clôture sous le milieu du plus haut / plus bas des N bougies), vente en prime
@@ -167,6 +168,7 @@ function signauxAchat(bs, dirSup, P) {
     if (P.corpsPrecMin && !(p.h > p.l && Math.abs(p.c - p.o) >= P.corpsPrecMin * (p.h - p.l))) continue;
     if (P.taillePrecMin && !(p.h - p.l >= P.taillePrecMin * atr[q - 1])) continue;
     if (P.tailleEnglMin && !(b.h - b.l >= P.tailleEnglMin * atr[q - 1])) continue;
+    if (P.ratioMax && !(b.h - b.l <= P.ratioMax * (p.h - p.l))) continue;
     if (P.corpsEnglMin && !(b.c - b.o >= P.corpsEnglMin * (b.h - b.l))) continue;
     if (P.espaceR && resistance(bs, q, sommets, P.reculNiveaux) - b.c < P.espaceR * (b.c - b.l)) continue;
     if (P.rangeFenetre && enRange(bs, q, P.rangeFenetre, P.rangeEff)) continue;
