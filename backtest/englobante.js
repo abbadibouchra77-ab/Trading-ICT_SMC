@@ -163,7 +163,9 @@ function backtesterActif(actif, M15, ut, P, depuis, jusqua) {
     const tp = E + dir * P.rr * risque;
     const r = suivre(M15, k, dir, E, sl, tp, actif.spread, P.dureeMaxJours);
     trades.push({ symbole: actif.symbol, ut: NOM_UT[ut], sens: dir > 0 ? 'buy' : 'sell', tPlace: tClot, tFin: r.tFin, statut: r.statut, issue: r.issue, R: +r.R.toFixed(3),
-      entree: E, stop: sl, tp: tp, zone: s.zone.type, risqueSpread: +(actif.spread / risque).toFixed(3) });
+      entree: E, stop: sl, tp: tp, zone: s.zone.type, risqueSpread: +(actif.spread / risque).toFixed(3),
+      // pour les images : bougie du signal, zone POI (prix réels) et direction de l'unité supérieure
+      tSignal: bs[s.q].t, zoneBas: dir > 0 ? s.zone.bas : -s.zone.haut, zoneHaut: dir > 0 ? s.zone.haut : -s.zone.bas, tZone: bs[s.zone.iForme].t, issueDetail: r.issue });
     libre = r.tFin + 1;
   }
   return trades;
