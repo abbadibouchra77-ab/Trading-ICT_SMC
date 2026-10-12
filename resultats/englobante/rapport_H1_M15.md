@@ -134,3 +134,21 @@ Commande : `node backtest/englobante.js --donnees <dossier CSV> --ut 60,15 --sor
 | structure + range (0,5) + décote (48) | 48 | 31,3 % | -0,095 | 0,86 | 84 | 23,8 % | -0,286 | 0,63 |
 
 Réglage : `--reglages '{"structureUt":true,"rangeFenetre":24,"rangeEff":0.5}'`.
+
+## Vraie bougie englobée, sens opposé, pas sur un support / une résistance (règles du 12/10/2026)
+
+Base : `precOpposee` (la bougie englobée va dans l'autre sens) + `corpsPrecMin` 0,5 (pas de doji : corps ≥ 50 % de la bougie).
+
+| Réglage | H1 trades | H1 réussite | H1 R moyen | H1 PF | M15 trades | M15 réussite | M15 R moyen | M15 PF |
+|---|---|---|---|---|---|---|---|---|
+| A : base | 4 352 | 31,7 % | -0,056 | 0,92 | 17 051 | 29,8 % | -0,113 | 0,84 |
+| B : A + structure UT + pas de range (0,3) | 622 | 32,2 % | -0,038 | 0,94 | 1 903 | 30,1 % | -0,107 | 0,85 |
+| C : A + structure UT + pas de range (0,5) | 105 | 28,6 % | -0,143 | 0,80 | 284 | 29,2 % | -0,144 | 0,80 |
+| D : B + 2R de place jusqu'au sommet / creux non pris (`espaceR` 2) | 253 | 33,2 % | -0,005 | 0,99 | 737 | 27,5 % | -0,190 | 0,74 |
+| E : C + `espaceR` 2 | 52 | 23,1 % | -0,308 | 0,60 | 138 | 26,8 % | -0,227 | 0,70 |
+| **F : D + englobante avec un vrai corps (`corpsEnglMin` 0,5)** | **202** | **34,2 %** | **+0,023** | **1,03** | 632 | 26,7 % | -0,207 | 0,72 |
+| G : A + structure UT + `espaceR` 2 | 743 | 31,4 % | -0,071 | 0,90 | 2 518 | 28,4 % | -0,155 | 0,79 |
+| H : A + `espaceR` 2 | 1 275 | 29,9 % | -0,111 | 0,84 | 4 428 | 28,2 % | -0,164 | 0,78 |
+
+F : `--reglages '{"precOpposee":true,"corpsPrecMin":0.5,"structureUt":true,"rangeFenetre":24,"rangeEff":0.3,"espaceR":2,"corpsEnglMin":0.5}'`
+(202 trades en 7 ans sur 13 actifs : trop peu pour conclure ; années très irrégulières, de -14 R en 2020 à +13 R en 2022).

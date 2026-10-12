@@ -35,6 +35,13 @@ const DEFAUT = {
   pivotUt: 2,
   rangeFenetre: 0,     // > 0 : pas de trade si, sur ces N bougies avant le signal, le prix tourne en rond
   rangeEff: 0.3,       //       (déplacement net / chemin parcouru < rangeEff)
+  // Règles du 12/10/2026 (« on englobe une vraie bougie, pas un doji, et pas une bougie qui va dans le même sens ;
+  // pas d'englobante à contresens sur un support / une résistance ») :
+  precOpposee: false,  // la bougie englobée va dans l'autre sens (baissière pour un achat)
+  corpsPrecMin: 0,     // corps de la bougie englobée >= cette part de sa taille (pas de doji)
+  corpsEnglMin: 0,     // corps de l'englobante >= cette part de sa taille
+  espaceR: 0,          // > 0 : le sommet (creux pour une vente) non pris le plus proche est au moins à espaceR x le risque
+  reculNiveaux: 100,   //       sommets / creux de swing (pivots 2 bougies) des 100 dernières bougies
   decote: 0            // > 0 : achat seulement en décote (clôture sous le milieu du plus haut / plus bas des N bougies), vente en prime
 };
 const SUPERIEURE = { 60: 'D1', 15: 'H4', 20: 'H4', 30: 'H4', 45: 'H4' };
@@ -106,11 +113,24 @@ function enRange(bs, q, n, eff) {
   return chemin <= 0 || Math.abs(bs[q - 1].c - bs[q - n].c) / chemin < eff;
 }
 
+// Résistance au-dessus de la clôture de q : le plus bas des sommets de swing (pivots 2 bougies, confirmés avant q)
+// des `recul` dernières bougies qui n'ont pas été dépassés depuis. Infinity s'il n'y en a pas.
+function resistance(bs, q, sommets, recul) {
+  let plusHaut = bs[q].h, niveau = Infinity;
+  for (let i = q - 1; i >= Math.max(0, q - recul); i--) {
+    if (i <= q - 2 && sommets[i] && bs[i].h > plusHaut && bs[i].h > bs[q].c) niveau = Math.min(niveau, bs[i].h);
+    plusHaut = Math.max(plusHaut, bs[i].h);
+  }
+  return niveau;
+}
+
 // Signaux d'ACHAT sur bs (graphique éventuellement retourné). dirSup(k) = direction de l'unité supérieure
 // connue à la clôture de la bougie k. Renvoie [{ q, zone }].
 function signauxAchat(bs, dirSup, P) {
   const zs = zonesAchat(bs, P.ageMaxZone), out = [];
   const dirUt = P.structureUt ? directions(bs, P.pivotUt) : null;
+  const sommets = new Uint8Array(bs.length);
+  if (P.espaceR) for (const x of moteur.pivots(bs, 2)) if (x.type === 'H') sommets[x.i] = 1;
   let z = 0; const actives = [];
   for (let q = 20; q < bs.length; q++) {
     // zones valables après la clôture de q-1
@@ -121,6 +141,10 @@ function signauxAchat(bs, dirSup, P) {
     if (P.englobe === 'corps' ? !(p.c < p.o && b.c > p.o) : !(b.c > p.h)) continue;
     if (dirSup(q) !== 1) continue;
     if (dirUt && dirUt[q] !== 1) continue;
+    if (P.precOpposee && !(p.c < p.o)) continue;
+    if (P.corpsPrecMin && !(p.h > p.l && Math.abs(p.c - p.o) >= P.corpsPrecMin * (p.h - p.l))) continue;
+    if (P.corpsEnglMin && !(b.c - b.o >= P.corpsEnglMin * (b.h - b.l))) continue;
+    if (P.espaceR && resistance(bs, q, sommets, P.reculNiveaux) - b.c < P.espaceR * (b.c - b.l)) continue;
     if (P.rangeFenetre && enRange(bs, q, P.rangeFenetre, P.rangeEff)) continue;
     if (P.decote) {
       let hi = -Infinity, lo = Infinity; for (let i = Math.max(0, q - P.decote); i <= q; i++) { hi = Math.max(hi, bs[i].h); lo = Math.min(lo, bs[i].l); }
@@ -258,4 +282,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { DEFAUT, zonesAchat, directions, enRange, signauxAchat, suivre, backtesterActif };
+module.exports = { DEFAUT, zonesAchat, directions, enRange, resistance, signauxAchat, suivre, backtesterActif };
